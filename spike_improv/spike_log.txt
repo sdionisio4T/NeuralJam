@@ -1,0 +1,115 @@
+20:23:31 [INFO] 
+20:23:31 [INFO] ######################################################################
+20:23:31 [INFO] # SPIKE IMPROV_RNN — 2026-05-17T20:23:31
+20:23:31 [INFO] # Python 3.10.11 — cwd C:\AI-Duet-Local\spike_improv
+20:23:31 [INFO] ######################################################################
+20:23:31 [INFO] 
+20:23:31 [INFO] ======================================================================
+20:23:31 [INFO] [FASE 0] Download del bundle
+20:23:31 [INFO] ======================================================================
+20:23:31 [INFO]   URL:    http://download.magenta.tensorflow.org/models/chord_pitches_improv.mag
+20:23:31 [INFO]   Path:   C:\AI-Duet-Local\spike_improv\chord_pitches_improv.mag
+20:23:31 [INFO]   Status: ya existe (5.4 MB), skip download
+20:23:31 [INFO] 
+20:23:31 [INFO] ======================================================================
+20:23:31 [INFO] [FASE 1] Carga del modelo + warmup
+20:23:31 [INFO] ======================================================================
+20:23:31 [INFO]   RAM antes de cargar: 21 MB
+20:23:31 [INFO]   Importando TF + Magenta (esto puede tardar)...
+20:23:47 [INFO]   Imports listos (16.4s)
+20:23:48 [INFO]   Bundle config_id: chord_pitches_improv
+20:23:48 [INFO]   Bundle cargado en 0.4s
+20:23:48 [INFO]   RAM post carga: 377 MB
+20:23:48 [INFO]   Warmup pass (descartado)...
+20:23:48 [INFO]   Warmup en 0.6s (este número es cold-start real)
+20:23:48 [INFO]   RAM post warmup: 409 MB
+20:23:48 [INFO] 
+20:23:48 [INFO] ======================================================================
+20:23:48 [INFO] [FASE 2] Test de notación armónica
+20:23:48 [INFO] ======================================================================
+20:23:48 [INFO]   Primer fijo: C D E F (4 negras), temp=1.0, 2 compases
+20:23:48 [INFO] 
+20:23:48 [INFO]   [triads] 'Dm G C C'
+20:23:48 [INFO]     OK — 7 notas generadas → outputs\notation_triads.mid
+20:23:48 [INFO]   [sevenths] 'Dm7 G7 Cmaj7 Cmaj7'
+20:23:48 [INFO]     OK — 8 notas generadas → outputs\notation_sevenths.mid
+20:23:48 [INFO]   [complex] 'Em7b5 A7b9 Dm6 Dm6'
+20:23:49 [INFO]     OK — 8 notas generadas → outputs\notation_complex.mid
+20:23:49 [INFO]   [slash] 'C/E F/A G/B C'
+20:23:49 [INFO]     OK — 7 notas generadas → outputs\notation_slash.mid
+20:23:49 [INFO]   [invalid] 'XYZ Foo Bar Baz'
+20:23:49 [INFO]     EXCEPCIÓN (ChordSymbolError): Unable to parse chord symbol: XYZ
+20:23:49 [INFO] 
+20:23:49 [INFO]   Resumen notación soportada:
+20:23:49 [INFO]     triads     → OK
+20:23:49 [INFO]     sevenths   → OK
+20:23:49 [INFO]     complex    → OK
+20:23:49 [INFO]     slash      → OK
+20:23:49 [INFO]     invalid    → ERROR
+20:23:49 [INFO] 
+20:23:49 [INFO] ======================================================================
+20:23:49 [INFO] [FASE 3] Latencia (post-warmup)
+20:23:49 [INFO] ======================================================================
+20:23:49 [INFO]   Corridas por longitud: 3
+20:23:49 [INFO]   Progresión: 'Dm7 G7 Cmaj7 Cmaj7' (loopeada por el modelo)
+20:23:49 [INFO] 
+20:23:49 [INFO]    4 compases: ['0.13s', '0.13s', '0.11s'] → mean 0.12s
+20:23:50 [INFO]    8 compases: ['0.30s', '0.27s', '0.31s'] → mean 0.29s
+20:23:52 [INFO]   16 compases: ['0.95s', '0.58s', '0.70s'] → mean 0.75s
+20:23:52 [INFO] 
+20:23:52 [INFO]   RAM pico durante latencia: 410 MB
+20:23:52 [INFO] 
+20:23:52 [INFO] ======================================================================
+20:23:52 [INFO] [FASE 4] Escenarios musicales (para escuchar en Studio One)
+20:23:52 [INFO] ======================================================================
+20:23:52 [INFO]   [escenario_1_major]
+20:23:52 [INFO]     primer:  [60, 62, 64, 65]
+20:23:52 [INFO]     chords:  'Dm7 G7 Cmaj7 Cmaj7'
+20:23:52 [INFO]     temp:    0.8
+20:23:52 [INFO]     12 notas en 0.12s → outputs\escenario_1_major.mid
+20:23:52 [INFO]     para escuchar con contexto: tocá 'Dm7 G7 Cmaj7 Cmaj7' en el piano sobre el playback del .mid
+20:23:52 [INFO] 
+20:23:52 [INFO]   [escenario_2_minor]
+20:23:52 [INFO]     primer:  [59, 62, 65, 69]
+20:23:52 [INFO]     chords:  'Em7b5 A7 Dm7 Dm7'
+20:23:52 [INFO]     temp:    1.0
+20:23:52 [INFO]     15 notas en 0.12s → outputs\escenario_2_minor.mid
+20:23:52 [INFO]     para escuchar con contexto: tocá 'Em7b5 A7 Dm7 Dm7' en el piano sobre el playback del .mid
+20:23:52 [INFO] 
+20:23:52 [INFO]   [escenario_3_high_temp]
+20:23:52 [INFO]     primer:  [60, 62, 64, 65]
+20:23:52 [INFO]     chords:  'Dm7 G7 Cmaj7 Cmaj7'
+20:23:52 [INFO]     temp:    1.2
+20:23:52 [INFO]     16 notas en 0.14s → outputs\escenario_3_high_temp.mid
+20:23:52 [INFO]     para escuchar con contexto: tocá 'Dm7 G7 Cmaj7 Cmaj7' en el piano sobre el playback del .mid
+20:23:52 [INFO] 
+20:23:52 [INFO] 
+20:23:52 [INFO] ======================================================================
+20:23:52 [INFO] [RESUMEN]
+20:23:52 [INFO] ======================================================================
+20:23:52 [INFO]   Notación armónica:
+20:23:52 [INFO]     triads     → ok
+20:23:52 [INFO]     sevenths   → ok
+20:23:52 [INFO]     complex    → ok
+20:23:52 [INFO]     slash      → ok
+20:23:52 [INFO]     invalid    → error
+20:23:52 [INFO] 
+20:23:52 [INFO]   Latencia (mean por longitud):
+20:23:52 [INFO]      4 compases: 0.12s
+20:23:52 [INFO]      8 compases: 0.29s
+20:23:52 [INFO]     16 compases: 0.75s
+20:23:52 [INFO] 
+20:23:52 [INFO]   Escenarios musicales generados:
+20:23:52 [INFO]     escenario_1_major: OK (0.12s) — outputs\escenario_1_major.mid
+20:23:52 [INFO]     escenario_2_minor: OK (0.12s) — outputs\escenario_2_minor.mid
+20:23:52 [INFO]     escenario_3_high_temp: OK (0.14s) — outputs\escenario_3_high_temp.mid
+20:23:52 [INFO] 
+20:23:53 [INFO]   Próximos pasos sugeridos según resultados:
+20:23:53 [INFO]     1. Escuchar los 3 escenarios en Studio One.
+20:23:53 [INFO]     2. Comparar notation_triads vs notation_sevenths a oído —
+20:23:53 [INFO]        si suenan distintos, el modelo entiende séptimas.
+20:23:53 [INFO]     3. Con la latencia confirmada, decidir silencio vs downbeat.
+20:23:53 [INFO]     4. Recién entonces: diseñar config.py de NeuralJam.
+20:23:53 [INFO] 
+20:23:53 [INFO]   Log completo: C:\AI-Duet-Local\spike_improv\spike_log.txt
+20:23:53 [INFO]   MIDIs:        C:\AI-Duet-Local\spike_improv\outputs
