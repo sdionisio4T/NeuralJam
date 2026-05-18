@@ -43,15 +43,20 @@ MODE = "improv"
 # ===========================================================================
 # MIDI
 # ===========================================================================
-# Nombres EXACTOS de los puertos. Para listarlos:
-#   python -c "import mido; print(mido.get_input_names(), mido.get_output_names())"
+# Nombres de los puertos. Pueden ser PREFIJOS: si no hay match exacto con
+# los puertos disponibles, el sistema busca puertos cuyo nombre empiece
+# con este string (ver neuraljam.midi.ports.find_port_by_name).
 #
-# El sufijo " 2" en AI-Duet-OUT no es error: es como mido nombra el puerto
-# loopMIDI en este sistema. Si cambiás de máquina o reinstalás loopMIDI,
-# verificá el nombre exacto antes de tocar otra cosa.
+# Esto es necesario porque mido en Windows agrega un sufijo numérico
+# inestable ("CASIO USB-MIDI 0", "CASIO USB-MIDI 1") que puede cambiar
+# entre sesiones, al reconectar el USB o al reiniciar loopMIDI. Hardcodear
+# el nombre completo es frágil.
+#
+# Para listar los puertos exactos disponibles:
+#   python -c "import mido; print('IN:', mido.get_input_names()); print('OUT:', mido.get_output_names())"
 
-MIDI_INPUT_NAME = "CASIO USB-MIDI 0"
-MIDI_OUTPUT_NAME = "AI-Duet-OUT 2"
+MIDI_INPUT_NAME = "CASIO USB-MIDI"     # prefijo: matchea "CASIO USB-MIDI 0", "...1", etc.
+MIDI_OUTPUT_NAME = "AI-Duet-OUT"       # prefijo: matchea cualquier sufijo de loopMIDI
 
 
 # ===========================================================================

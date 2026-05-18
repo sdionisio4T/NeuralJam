@@ -1,0 +1,44 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ===== Entorno virtual =====
+venv/
+env/
+.venv/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== Modelos de Magenta =====
+# Pesados (3-5 MB cada uno) y se descargan automáticamente desde URLs en
+# config.PROFILES. Mejor no commitearlos.
+*.mag
+models_data/
+
+# ===== Datos personales del usuario =====
+# Frases guardadas, primers importados, grabaciones.
+memory_data/
+
+# ===== Logs =====
+*.log
+neuraljam.log
+
+# ===== Outputs del spike =====
+# Los .mid generados son artefactos de prueba, no código fuente.
+spike_improv/outputs/
+spike_improv/spike_log.txt
+
+# ===== SO =====
+.DS_Store
+Thumbs.db
+desktop.ini
