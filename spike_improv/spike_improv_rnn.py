@@ -47,13 +47,13 @@ PRIMER_VELOCITY = 80
 
 # Casos de notación a probar en Fase 2
 NOTATION_TESTS = [
-    ("triads", "Dm G C C"),
+    ("triads",   "Dm G C C"),
     ("sevenths", "Dm7 G7 Cmaj7 Cmaj7"),
-    ("complex", "Em7b5 A7b9 Dm6 Dm6"),
-    ("slash", "C/E F/A G/B C"),
-    ("invalid", "XYZ Foo Bar Baz"),
+    ("complex",  "Em7b5 A7b9 Dm6 Dm6"),
+    ("slash",    "C/E F/A G/B C"),
+    ("invalid",  "XYZ Foo Bar Baz"),
 ]
-NOTATION_PRIMER = [60, 62, 64, 65]  # C D E F → 1 compás
+NOTATION_PRIMER = [60, 62, 64, 65]   # C D E F → 1 compás
 
 # Escenarios musicales de Fase 4
 MUSICAL_SCENARIOS = [
@@ -66,7 +66,7 @@ MUSICAL_SCENARIOS = [
     },
     {
         "name": "escenario_2_minor",
-        "primer": [59, 62, 65, 69],  # Bdim7 arpegiado
+        "primer": [59, 62, 65, 69],          # Bdim7 arpegiado
         "chords": "Em7b5 A7 Dm7 Dm7",
         "temperature": 1.0,
         "bars_total": 4,
@@ -84,9 +84,64 @@ LATENCY_BAR_COUNTS = [4, 8, 16]
 LATENCY_RUNS_PER_LENGTH = 3
 
 # ---------------------------------------------------------------------------
-# Logging
+# Primers musicalmente honestos (Fase 4b)
+#
+# Cada primer es una lista de eventos (pitch, start_time, duration).
+# El primer cuadrado original [60,62,64,65] sesgaba el output:
+#   - rítmicamente (4 negras alineadas → modelo continúa cuadrado)
+#   - armónicamente (notas diatónicas a C mayor → modelo se queda en C mayor
+#     aunque los acordes sugieran otra cosa)
+#
+# Estos primers ocupan 1 compás (2.0s a 120 BPM) y rompen ambos sesgos.
 # ---------------------------------------------------------------------------
 
+VARIETY_PRIMERS = {
+    # Bebop: corcheas + negras variadas, fraseo de improvisación real
+    # F G A C B A — line lick sobre Dm7
+    "bebop": [
+        (65, 0.00, 0.25),  # F  corchea
+        (67, 0.25, 0.25),  # G  corchea
+        (69, 0.50, 0.25),  # A  corchea
+        (72, 0.75, 0.25),  # C  corchea
+        (71, 1.00, 0.50),  # B  negra
+        (69, 1.50, 0.50),  # A  negra
+    ],
+    # Síncopa: notas en off-beats, anacrusa, NO en el downbeat
+    # A G F E — claramente no cuadrado
+    "syncopated": [
+        (69, 0.25, 0.25),  # A  en el "and" de 1
+        (67, 0.50, 0.50),  # G  negra en beat 2
+        (65, 1.25, 0.25),  # F  en el "and" de 3
+        (64, 1.50, 0.50),  # E  negra en beat 4
+    ],
+    # Cromatismo: Eb fuerza salida de C mayor diatónico
+    # D Eb F E D C — sugiere D dórico/bebop, no C mayor
+    "chromatic": [
+        (62, 0.00, 0.25),  # D
+        (63, 0.25, 0.25),  # Eb (fuera de C mayor)
+        (65, 0.50, 0.25),  # F
+        (64, 0.75, 0.25),  # E
+        (62, 1.00, 0.50),  # D
+        (60, 1.50, 0.50),  # C
+    ],
+}
+
+# Test específico para Em7b5: primer SIN Bb ni B natural.
+# El modelo elige libremente. Si genera Bb → entiende la b5 característica.
+# Si genera B natural → posiblemente degrada a Em (triada).
+# 4 compases de Em7b5 puro para dar al modelo 3 compases de generación libre.
+EM7B5_TEST_PRIMER = [
+    (64, 0.00, 0.25),  # E  corchea
+    (67, 0.25, 0.50),  # G  negra
+    (64, 0.75, 0.25),  # E  corchea
+    (67, 1.00, 0.25),  # G  corchea
+    (69, 1.25, 0.25),  # A  corchea (color extra, ni B ni Bb)
+    (67, 1.50, 0.50),  # G  negra
+]
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
 def setup_logging():
     """Logger dual: archivo detallado + consola limpia."""
@@ -98,9 +153,8 @@ def setup_logging():
         logger.removeHandler(h)
 
     fh = logging.FileHandler(LOG_PATH, mode="w", encoding="utf-8")
-    fh.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    )
+    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
+                                       datefmt="%H:%M:%S"))
     logger.addHandler(fh)
 
     ch = logging.StreamHandler(sys.stdout)
@@ -127,13 +181,11 @@ def section(title):
 
 try:
     import psutil
-
     _proc = psutil.Process(os.getpid())
 
     def ram_mb():
         return _proc.memory_info().rss / (1024 * 1024)
 except ImportError:
-
     def ram_mb():
         return None
 
@@ -149,7 +201,6 @@ def log_ram(label):
 # ---------------------------------------------------------------------------
 # Fase 0 — Download del bundle
 # ---------------------------------------------------------------------------
-
 
 def phase_0_download():
     section("[FASE 0] Download del bundle")
@@ -176,7 +227,6 @@ def phase_0_download():
 # Fase 1 — Carga del modelo + warmup
 # ---------------------------------------------------------------------------
 
-
 def phase_1_load_and_warmup():
     section("[FASE 1] Carga del modelo + warmup")
     log_ram("antes de cargar")
@@ -191,18 +241,16 @@ def phase_1_load_and_warmup():
     global read_bundle_file
 
     import note_seq
-    from magenta.models.improv_rnn.improv_rnn_model import (
-        ImprovRnnModel,
-        default_configs,
-    )
+    from note_seq.protobuf import music_pb2, generator_pb2
     from magenta.models.improv_rnn.improv_rnn_sequence_generator import (
         ImprovRnnSequenceGenerator,
+    )
+    from magenta.models.improv_rnn.improv_rnn_model import (
+        ImprovRnnModel, default_configs,
     )
     from magenta.models.shared.sequence_generator_bundle import (
         read_bundle_file,
     )
-    from note_seq.protobuf import generator_pb2, music_pb2
-
     log.info(f"  Imports listos ({time.time() - t0:.1f}s)")
 
     # Cargar bundle
@@ -229,7 +277,7 @@ def phase_1_load_and_warmup():
     log.info("  Warmup pass (descartado)...")
     t0 = time.time()
     primer_seq = build_input_sequence(
-        primer_pitches=[60],
+        primer=[60],
         chord_progression="C C C C",
         bars_total=2,
     )
@@ -244,13 +292,27 @@ def phase_1_load_and_warmup():
 # Construcción del input sequence (primer + chord progression)
 # ---------------------------------------------------------------------------
 
+def pitches_to_events(pitches, note_duration=PRIMER_NOTE_DURATION):
+    """
+    Helper: convierte [60, 62, 64, 65] en eventos cuadrados consecutivos.
+    Mantiene compatibilidad con los tests originales.
+    """
+    return [
+        (pitch, i * note_duration, note_duration)
+        for i, pitch in enumerate(pitches)
+    ]
 
-def build_input_sequence(primer_pitches, chord_progression, bars_total):
+
+def build_input_sequence(primer, chord_progression, bars_total):
     """
     Construye un NoteSequence con:
       - el tempo
-      - las notas del primer (negras a 120 BPM, una atrás de la otra)
+      - las notas del primer
       - los acordes como text_annotations tipo CHORD_SYMBOL, espaciados 1 por compás
+
+    primer puede ser:
+      - lista de pitches [60, 62, 64, 65]  → se convierten a negras cuadradas
+      - lista de eventos [(pitch, start, duration), ...]  → ritmo arbitrario
     """
     seq = music_pb2.NoteSequence()
     seq.tempos.add(qpm=QPM)
@@ -263,26 +325,32 @@ def build_input_sequence(primer_pitches, chord_progression, bars_total):
         ann.annotation_type = music_pb2.NoteSequence.TextAnnotation.CHORD_SYMBOL
         ann.time = i * SECONDS_PER_BAR
 
+    # Detectar formato del primer y normalizar a eventos
+    if primer and isinstance(primer[0], int):
+        events = pitches_to_events(primer)
+    else:
+        events = primer
+
     # Primer
-    current_time = 0.0
-    for pitch in primer_pitches:
+    last_end = 0.0
+    for pitch, start, duration in events:
         note = seq.notes.add()
         note.pitch = pitch
-        note.start_time = current_time
-        note.end_time = current_time + PRIMER_NOTE_DURATION
+        note.start_time = start
+        note.end_time = start + duration
         note.velocity = PRIMER_VELOCITY
         note.instrument = 0
         note.program = 0
-        current_time += PRIMER_NOTE_DURATION
+        if note.end_time > last_end:
+            last_end = note.end_time
 
-    seq.total_time = max(current_time, bars_total * SECONDS_PER_BAR)
+    seq.total_time = max(last_end, bars_total * SECONDS_PER_BAR)
     return seq
 
 
 # ---------------------------------------------------------------------------
 # Generación
 # ---------------------------------------------------------------------------
-
 
 def generate(generator, input_seq, bars_total, temperature):
     """
@@ -315,7 +383,6 @@ def save_midi(seq, name):
 # Fase 2 — Test de notación armónica
 # ---------------------------------------------------------------------------
 
-
 def phase_2_notation_tests(generator):
     """
     Para cada caso de notación, intenta generar 2 compases con primer fijo.
@@ -331,7 +398,7 @@ def phase_2_notation_tests(generator):
         log.info(f"  [{test_id}] '{progression}'")
         try:
             primer_seq = build_input_sequence(
-                primer_pitches=NOTATION_PRIMER,
+                primer=NOTATION_PRIMER,
                 chord_progression=progression,
                 bars_total=2,
             )
@@ -356,15 +423,14 @@ def phase_2_notation_tests(generator):
 # Fase 3 — Latencia
 # ---------------------------------------------------------------------------
 
-
 def phase_3_latency(generator):
     section("[FASE 3] Latencia (post-warmup)")
     log.info(f"  Corridas por longitud: {LATENCY_RUNS_PER_LENGTH}")
-    log.info("  Progresión: 'Dm7 G7 Cmaj7 Cmaj7' (loopeada por el modelo)")
+    log.info(f"  Progresión: 'Dm7 G7 Cmaj7 Cmaj7' (loopeada por el modelo)")
     log.info("")
 
     primer_seq = build_input_sequence(
-        primer_pitches=[60, 62, 64, 65],
+        primer=[60, 62, 64, 65],
         chord_progression="Dm7 G7 Cmaj7 Cmaj7",
         bars_total=max(LATENCY_BAR_COUNTS),
     )
@@ -379,7 +445,7 @@ def phase_3_latency(generator):
             try:
                 _ = generate(generator, primer_seq, bars_total=bars, temperature=1.0)
             except Exception as e:
-                log.warning(f"    {bars} bars run {i + 1} FALLÓ: {e}")
+                log.warning(f"    {bars} bars run {i+1} FALLÓ: {e}")
                 continue
             runs.append(time.time() - t0)
             r = ram_mb()
@@ -388,10 +454,8 @@ def phase_3_latency(generator):
 
         if runs:
             mean = sum(runs) / len(runs)
-            log.info(
-                f"  {bars:2d} compases: "
-                f"{[f'{x:.2f}s' for x in runs]} → mean {mean:.2f}s"
-            )
+            log.info(f"  {bars:2d} compases: "
+                     f"{[f'{x:.2f}s' for x in runs]} → mean {mean:.2f}s")
             results[bars] = {"runs": runs, "mean": mean}
         else:
             results[bars] = {"runs": [], "mean": None}
@@ -406,7 +470,6 @@ def phase_3_latency(generator):
 # Fase 4 — Escenarios musicales
 # ---------------------------------------------------------------------------
 
-
 def phase_4_musical_scenarios(generator):
     section("[FASE 4] Escenarios musicales (para escuchar en Studio One)")
 
@@ -419,24 +482,21 @@ def phase_4_musical_scenarios(generator):
 
         try:
             primer_seq = build_input_sequence(
-                primer_pitches=sc["primer"],
+                primer=sc["primer"],
                 chord_progression=sc["chords"],
                 bars_total=sc["bars_total"],
             )
             t0 = time.time()
             out_seq = generate(
-                generator,
-                primer_seq,
+                generator, primer_seq,
                 bars_total=sc["bars_total"],
                 temperature=sc["temperature"],
             )
             elapsed = time.time() - t0
             path = save_midi(out_seq, sc["name"])
             log.info(f"    {len(out_seq.notes)} notas en {elapsed:.2f}s → {path}")
-            log.info(
-                f"    para escuchar con contexto: tocá '{sc['chords']}' "
-                f"en el piano sobre el playback del .mid"
-            )
+            log.info(f"    para escuchar con contexto: tocá '{sc['chords']}' "
+                     f"en el piano sobre el playback del .mid")
             results.append((sc["name"], "ok", elapsed, str(path)))
         except Exception as e:
             log.error(f"    FALLÓ ({type(e).__name__}): {e}")
@@ -447,11 +507,117 @@ def phase_4_musical_scenarios(generator):
 
 
 # ---------------------------------------------------------------------------
+# Fase 4b — Primers musicalmente honestos sobre el escenario major
+#
+# Mismo escenario armónico (Dm7 G7 Cmaj7 Cmaj7, temp 0.8) que escenario_1,
+# pero con primers que rompen el sesgo cuadrado + diatónico C mayor.
+# Comparando escenario_1_major.mid contra estos 3, podés evaluar al modelo
+# aislado del primer.
+# ---------------------------------------------------------------------------
+
+def phase_4b_variety_primers(generator):
+    section("[FASE 4b] Primers variados (modelo aislado del sesgo del primer)")
+    log.info("  Mismo escenario armónico que escenario_1: Dm7 G7 Cmaj7 Cmaj7, temp 0.8")
+    log.info("  Compara estos contra outputs/escenario_1_major.mid")
+    log.info("")
+
+    results = []
+    for primer_name, primer_events in VARIETY_PRIMERS.items():
+        out_name = f"escenario_major_{primer_name}"
+        log.info(f"  [{out_name}]")
+        log.info(f"    primer:  {primer_name} ({len(primer_events)} eventos)")
+
+        try:
+            primer_seq = build_input_sequence(
+                primer=primer_events,
+                chord_progression="Dm7 G7 Cmaj7 Cmaj7",
+                bars_total=4,
+            )
+            t0 = time.time()
+            out_seq = generate(generator, primer_seq, bars_total=4, temperature=0.8)
+            elapsed = time.time() - t0
+            path = save_midi(out_seq, out_name)
+            log.info(f"    {len(out_seq.notes)} notas en {elapsed:.2f}s → {path}")
+            results.append((out_name, "ok", elapsed, str(path)))
+        except Exception as e:
+            log.error(f"    FALLÓ ({type(e).__name__}): {e}")
+            results.append((out_name, "error", None, str(e)))
+        log.info("")
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Fase 4c — Test específico Em7b5: ¿usa Bb (b5) o B natural (degrada a Em)?
+#
+# Primer neutral: solo notas E G A (sin B ni Bb). Acordes: 4 compases de
+# Em7b5 puro. El modelo elige libremente entre Bb y B natural en su
+# generación. Análisis postrun: contar Bb (pitch class 10) y B (pitch class
+# 11) en las notas generadas.
+# ---------------------------------------------------------------------------
+
+def phase_4c_em7b5_test(generator):
+    section("[FASE 4c] Test Em7b5: ¿b5 (Bb) o quinta justa (B)?")
+    log.info("  Primer neutral (E G A, sin B ni Bb), 4 compases de Em7b5 puro")
+    log.info("  Si el modelo usa Bb → entiende la b5. Si usa B natural → degrada a Em.")
+    log.info("")
+
+    try:
+        primer_seq = build_input_sequence(
+            primer=EM7B5_TEST_PRIMER,
+            chord_progression="Em7b5 Em7b5 Em7b5 Em7b5",
+            bars_total=4,
+        )
+        # 3 corridas para promediar (un solo output puede ser anecdótico)
+        all_pitches = []
+        for run_idx in range(3):
+            t0 = time.time()
+            out_seq = generate(generator, primer_seq, bars_total=4, temperature=1.0)
+            elapsed = time.time() - t0
+            # Tomar solo notas generadas (después del primer)
+            primer_end = primer_seq.notes[-1].end_time
+            gen_notes = [n for n in out_seq.notes if n.start_time >= primer_end - 0.01]
+            gen_pitches = [n.pitch for n in gen_notes]
+            all_pitches.append(gen_pitches)
+            path = save_midi(out_seq, f"em7b5_test_run{run_idx + 1}")
+            log.info(f"  Run {run_idx + 1}: {len(gen_notes)} notas generadas en {elapsed:.2f}s → {path}")
+
+        # Análisis: contar pitch class 10 (Bb) y 11 (B natural) en notas generadas
+        bb_count = 0
+        b_count = 0
+        total_gen = 0
+        for pitches in all_pitches:
+            for p in pitches:
+                total_gen += 1
+                pc = p % 12
+                if pc == 10:
+                    bb_count += 1
+                elif pc == 11:
+                    b_count += 1
+
+        log.info("")
+        log.info(f"  Análisis sobre {total_gen} notas generadas (3 runs):")
+        log.info(f"    Bb (b5 de Em7b5)         → {bb_count} ocurrencias")
+        log.info(f"    B  natural (5ª de Em)    → {b_count} ocurrencias")
+        if bb_count > b_count:
+            log.info(f"    Veredicto: modelo PROBABLEMENTE entiende la b5")
+        elif b_count > bb_count and bb_count == 0:
+            log.info(f"    Veredicto: modelo posiblemente DEGRADA Em7b5 → Em (no usa Bb)")
+        else:
+            log.info(f"    Veredicto: AMBIGUO, los dos aparecen; usa criterio auditivo")
+
+        return {"bb_count": bb_count, "b_count": b_count, "total": total_gen}
+    except Exception as e:
+        log.error(f"  FALLÓ: {e}")
+        return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Fase 5 — Resumen ejecutivo
 # ---------------------------------------------------------------------------
 
-
-def phase_5_summary(notation_results, latency_results, scenario_results):
+def phase_5_summary(notation_results, latency_results, scenario_results,
+                     variety_results, em7b5_results):
     section("[RESUMEN]")
 
     log.info("  Notación armónica:")
@@ -469,7 +635,7 @@ def phase_5_summary(notation_results, latency_results, scenario_results):
             log.info(f"    {bars:2d} compases: sin datos")
 
     log.info("")
-    log.info("  Escenarios musicales generados:")
+    log.info("  Escenarios musicales (primer cuadrado original):")
     for name, status, elapsed, info in scenario_results:
         if status == "ok":
             log.info(f"    {name}: OK ({elapsed:.2f}s) — {info}")
@@ -477,12 +643,30 @@ def phase_5_summary(notation_results, latency_results, scenario_results):
             log.info(f"    {name}: FAIL — {info}")
 
     log.info("")
+    log.info("  Escenario major con primers variados:")
+    for name, status, elapsed, info in variety_results:
+        if status == "ok":
+            log.info(f"    {name}: OK ({elapsed:.2f}s) — {info}")
+        else:
+            log.info(f"    {name}: FAIL — {info}")
+
+    log.info("")
+    log.info("  Test Em7b5 (Bb vs B natural):")
+    if "error" in em7b5_results:
+        log.info(f"    FAIL: {em7b5_results['error']}")
+    else:
+        log.info(f"    Bb: {em7b5_results['bb_count']}  /  "
+                 f"B natural: {em7b5_results['b_count']}  /  "
+                 f"total generadas: {em7b5_results['total']}")
+
+    log.info("")
     log.info("  Próximos pasos sugeridos según resultados:")
-    log.info("    1. Escuchar los 3 escenarios en Studio One.")
-    log.info("    2. Comparar notation_triads vs notation_sevenths a oído —")
-    log.info("       si suenan distintos, el modelo entiende séptimas.")
-    log.info("    3. Con la latencia confirmada, decidir silencio vs downbeat.")
-    log.info("    4. Recién entonces: diseñar config.py de NeuralJam.")
+    log.info("    1. Comparar escenario_1_major vs escenario_major_bebop —")
+    log.info("       si el bebop suena con mejor groove, el problema era el primer.")
+    log.info("    2. Comparar escenario_major_chromatic — si el modelo NO se queda en")
+    log.info("       C mayor diatónico, está usando el contexto armónico real.")
+    log.info("    3. Escuchar em7b5_test_run*.mid — el conteo Bb vs B es indicativo,")
+    log.info("       pero el oído manda (Bb prominente = entiende b5).")
     log.info("")
     log.info(f"  Log completo: {LOG_PATH.resolve()}")
     log.info(f"  MIDIs:        {OUTPUT_DIR.resolve()}")
@@ -491,7 +675,6 @@ def phase_5_summary(notation_results, latency_results, scenario_results):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-
 
 def main():
     log.info("")
@@ -503,10 +686,12 @@ def main():
     try:
         phase_0_download()
         generator = phase_1_load_and_warmup()
-        notation = phase_2_notation_tests(generator)
-        latency = phase_3_latency(generator)
+        notation  = phase_2_notation_tests(generator)
+        latency   = phase_3_latency(generator)
         scenarios = phase_4_musical_scenarios(generator)
-        phase_5_summary(notation, latency, scenarios)
+        variety   = phase_4b_variety_primers(generator)
+        em7b5     = phase_4c_em7b5_test(generator)
+        phase_5_summary(notation, latency, scenarios, variety, em7b5)
     except KeyboardInterrupt:
         log.warning("\n  Interrumpido con Ctrl+C")
     except Exception as e:
