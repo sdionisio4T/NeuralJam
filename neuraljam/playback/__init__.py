@@ -1,16 +1,22 @@
 """
 neuraljam.playback — Reproducción hacia el DAW.
 
-Responsabilidades:
-- Recibir un NoteSequence de generation/
-- Programar eventos note-on/note-off con timing preciso
-- Esperar al próximo downbeat para disparar (cuando entre clock sync)
-- Garantizar que no se solapen dos respuestas (turn-based estricto)
+Toma NoteSequences que entrega generation/ y los emite al puerto MIDI
+de salida (loopMIDI → Studio One) con timing real.
 
-Submódulos planeados:
-- player.py: scheduler de eventos MIDI, materializa NoteSequence
-- scheduler.py: lógica de "cuándo disparar" (próximo downbeat, etc.)
+Submódulos:
+- player.py: scheduler de eventos, materializa NoteSequence
 
-Contrato: API simple del tipo play(seq) o schedule(seq, at_downbeat=True).
-Internamente usa neuraljam.midi.output para el envío real.
+Contrato: Player.play(seq) bloquea hasta que termina la reproducción.
+Esto garantiza el turn-based: el siguiente turno del usuario no arranca
+hasta que la IA terminó de tocar.
 """
+
+__all__ = ["Player"]
+
+
+def __getattr__(name):
+    if name == "Player":
+        from neuraljam.playback.player import Player
+        return Player
+    raise AttributeError(f"module 'neuraljam.playback' has no attribute {name!r}")

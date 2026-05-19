@@ -7,12 +7,9 @@ una constante mágica que no está en este archivo, eso es un bug.
 
 Notas de diseño:
 - Variables planas y sueltas, no clases. Suficiente para 3 modos.
-  Si crece a >5 modos o aparece validación compleja, migrar a dataclass.
-- `MODE` se setea acá con default. El CLI puede sobrescribirlo en runtime
-  haciendo `import neuraljam.config as cfg; cfg.MODE = "melody"` ANTES
-  de que cualquier otro módulo lea `cfg.active_profile()`.
-- `active_profile()` es función (no constante precomputada) porque MODE
-  puede cambiar después del import. Una constante quedaría stale.
+- `MODE` define el modelo *default*. Con dos modelos en RAM (MelodyRNN
+  + ImprovRNN), el sistema puede cambiar en runtime por señal del piano.
+- `active_profile()` es función para soportar override de MODE post-import.
 """
 
 from pathlib import Path
@@ -22,84 +19,66 @@ from pathlib import Path
 # Rutas base
 # ===========================================================================
 
-# Raíz del proyecto. Calculada desde la ubicación de este archivo para que
-# funcione independiente del cwd desde el cual se ejecute el sistema.
-# `__file__` = .../neuraljam/config.py → parent.parent = raíz del proyecto.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-MODELS_DIR = PROJECT_ROOT / "models_data"   # bundles .mag descargados
-MEMORY_DIR = PROJECT_ROOT / "memory_data"   # frases guardadas + primers
+MODELS_DIR = PROJECT_ROOT / "models_data"
+MEMORY_DIR = PROJECT_ROOT / "memory_data"
 
 
 # ===========================================================================
-# Modo activo
+# Modo activo (modelo default)
 # ===========================================================================
+# Decisión post-test del 18/05: MelodyRNN como motor principal porque
+# dialoga mejor con las frases del usuario. ImprovRNN queda en RAM como
+# modelo alternativo, disparable con SIGNAL_NOTE_MIN/MAX desde el piano.
 
-# Default. Sobrescribible por CLI en el entry point (ver nota de diseño arriba).
-# Valores válidos: "improv" | "melody" | "performance"
-MODE = "improv"
+MODE = "melody"
 
 
 # ===========================================================================
 # MIDI
 # ===========================================================================
-# Nombres de los puertos. Pueden ser PREFIJOS: si no hay match exacto con
-# los puertos disponibles, el sistema busca puertos cuyo nombre empiece
-# con este string (ver neuraljam.midi.ports.find_port_by_name).
-#
-# Esto es necesario porque mido en Windows agrega un sufijo numérico
-# inestable ("CASIO USB-MIDI 0", "CASIO USB-MIDI 1") que puede cambiar
-# entre sesiones, al reconectar el USB o al reiniciar loopMIDI. Hardcodear
-# el nombre completo es frágil.
-#
-# Para listar los puertos exactos disponibles:
-#   python -c "import mido; print('IN:', mido.get_input_names()); print('OUT:', mido.get_output_names())"
+# Nombres como prefijos: el resolver acepta sufijos numéricos inestables.
 
-MIDI_INPUT_NAME = "CASIO USB-MIDI"     # prefijo: matchea "CASIO USB-MIDI 0", "...1", etc.
-MIDI_OUTPUT_NAME = "AI-Duet-OUT"       # prefijo: matchea cualquier sufijo de loopMIDI
+MIDI_INPUT_NAME = "CASIO USB-MIDI"
+MIDI_OUTPUT_NAME = "AI-Duet-OUT"
 
 
 # ===========================================================================
-# Detección de frases (consumido por midi/phrase_detector.py)
+# Detección de frases
 # ===========================================================================
 
-# Segundos de silencio absoluto (todas las teclas levantadas) que disparan
-# el envío de la frase al engine de generación. Más alto = más tiempo de
-# pensamiento entre notas sin que la IA dispare.
-# Subir si la IA dispara antes de que termines de tocar.
 SILENCE_TIMEOUT = 2.5
-
-# Mínimo de notas para considerar una secuencia como "frase" y disparar
-# respuesta. Evita que un toque accidental o una nota suelta dispare al
-# modelo.
 MIN_NOTES_TO_RESPOND = 2
+
+
+# ===========================================================================
+# Señal de cambio de modelo
+# ===========================================================================
+# Si la ÚLTIMA nota de la frase cae dentro de este rango (inclusive),
+# el sistema descarta esa nota del primer y usa ImprovRNN en ese turno.
+# Si no, usa MelodyRNN (default).
+#
+# Rango actual: A0 (21) a E1 (28). 8 teclas en la octava más grave del
+# piano. Difícil tocarlas por accidente improvisando jazz normal.
+#
+# Cambiarlo si querés rango más amplio o más restrictivo. Para usar UNA
+# sola nota: SIGNAL_NOTE_MIN == SIGNAL_NOTE_MAX.
+
+SIGNAL_NOTE_MIN = 21    # A0
+SIGNAL_NOTE_MAX = 28    # E1
 
 
 # ===========================================================================
 # Tempo y grilla
 # ===========================================================================
 
-# QPM usado cuando no hay MIDI Clock entrante del DAW (caso default actual,
-# antes del paso 8 del roadmap). Cuando se implemente clock sync, este
-# valor pasa a ser solo fallback inicial.
 QPM_FALLBACK = 120
-
-# Resolución temporal interna del modelo. ImprovRNN trabaja en
-# semicorcheas (4 steps por negra). No cambiar a menos que se entienda el
-# impacto sobre la cuantización del primer y del output.
 STEPS_PER_QUARTER = 4
 
 
 # ===========================================================================
-# Armonía
+# Armonía (solo se usa con el perfil improv)
 # ===========================================================================
-# Etapa 1 del sistema armónico (ver ROADMAP): progresión hardcoded.
-# Formato: string con acordes separados por espacios, un acorde por compás.
-# Si la progresión es más corta que la generación, el modelo la loopea.
-#
-# Notación soportada (validada en el spike):
-#   triadas (Dm, G, C), séptimas (Dm7, G7, Cmaj7), alteraciones (Em7b5,
-#   A7b9), sextas (Dm6), slash (C/E).
 
 CHORD_PROGRESSION = "Dm7 G7 Cmaj7 Cmaj7"
 
@@ -107,30 +86,14 @@ CHORD_PROGRESSION = "Dm7 G7 Cmaj7 Cmaj7"
 # ===========================================================================
 # Perfiles por modo
 # ===========================================================================
-# Cada perfil agrupa parámetros específicos del modelo de ese modo.
-# Acceso vía active_profile() abajo.
-#
-# - model_path: path local del bundle .mag. Si no existe, el cargador
-#   descarga desde model_url.
-# - model_config_id: identificador interno del modelo dentro de Magenta.
-#   Tiene que matchear el del bundle; si no, falla al cargar.
-# - temperature: 0.7 conservador, 1.0 balanceado, 1.3 creativo/caótico.
-# - response_bars: cuántos compases genera la IA por respuesta.
-#   Latencia (medida en spike): 4=0.12s, 8=0.29s, 16=0.75s.
-# - needs_chords: si False, el modelo ignora chord_progression.
-# - polyphonic: si True, el modelo puede generar acordes simultáneos.
+# Soportamos dos familias de modelos:
+#   - improv_rnn (chord-conditioned, requiere progresión)
+#   - melody_rnn (sin chords, dúo melódico libre)
+# El loader hace dispatch según "model_family".
 
 PROFILES = {
-    "improv": {
-        "model_path": MODELS_DIR / "chord_pitches_improv.mag",
-        "model_url": "http://download.magenta.tensorflow.org/models/chord_pitches_improv.mag",
-        "model_config_id": "chord_pitches_improv",
-        "temperature": 0.8,
-        "response_bars": 4,
-        "needs_chords": True,
-        "polyphonic": False,
-    },
     "melody": {
+        "model_family": "melody_rnn",
         "model_path": MODELS_DIR / "attention_rnn.mag",
         "model_url": "http://download.magenta.tensorflow.org/models/attention_rnn.mag",
         "model_config_id": "attention_rnn",
@@ -139,10 +102,19 @@ PROFILES = {
         "needs_chords": False,
         "polyphonic": False,
     },
-    # Performance todavía no implementado. Bundle a confirmar cuando se
-    # active el modo. Dejo el esqueleto para que la forma del config
-    # no cambie cuando llegue el momento.
+    "improv": {
+        "model_family": "improv_rnn",
+        "model_path": MODELS_DIR / "chord_pitches_improv.mag",
+        "model_url": "http://download.magenta.tensorflow.org/models/chord_pitches_improv.mag",
+        "model_config_id": "chord_pitches_improv",
+        "temperature": 0.8,
+        "response_bars": 4,
+        "needs_chords": True,
+        "polyphonic": False,
+    },
+    # Performance todavía no implementado.
     "performance": {
+        "model_family": "performance_rnn",
         "model_path": MODELS_DIR / "performance_with_dynamics.mag",
         "model_url": "http://download.magenta.tensorflow.org/models/performance_with_dynamics.mag",
         "model_config_id": "performance_with_dynamics",
@@ -157,9 +129,6 @@ PROFILES = {
 # ===========================================================================
 # Memoria (paso 6 del roadmap)
 # ===========================================================================
-# Subdirectorios donde el sistema guarda frases del usuario e importa
-# solos externos como style primers. Vacíos por ahora; el módulo
-# memory/ los va a poblar.
 
 USER_PHRASES_DIR = MEMORY_DIR / "user_phrases"
 IMPORTED_PRIMERS_DIR = MEMORY_DIR / "imported_primers"
@@ -169,7 +138,7 @@ IMPORTED_PRIMERS_DIR = MEMORY_DIR / "imported_primers"
 # Logging
 # ===========================================================================
 
-LOG_LEVEL = "INFO"          # DEBUG | INFO | WARNING | ERROR
+LOG_LEVEL = "INFO"
 LOG_FILE = PROJECT_ROOT / "neuraljam.log"
 
 
@@ -178,52 +147,36 @@ LOG_FILE = PROJECT_ROOT / "neuraljam.log"
 # ===========================================================================
 
 def active_profile():
-    """
-    Devuelve el dict del perfil correspondiente al MODE actual.
-
-    Función (no constante) a propósito: si el CLI sobreescribe MODE
-    después del import, los llamantes siguen viendo el modo correcto.
-    """
+    """Devuelve el perfil del MODE actual (default)."""
     if MODE not in PROFILES:
         raise ValueError(
-            f"MODE '{MODE}' no reconocido. "
-            f"Válidos: {list(PROFILES.keys())}"
+            f"MODE '{MODE}' no reconocido. Válidos: {list(PROFILES.keys())}"
         )
     return PROFILES[MODE]
 
 
 def ensure_dirs():
-    """
-    Crea los directorios runtime si no existen. Llamar UNA vez al
-    bootstrap del sistema, no en cada operación.
-
-    Separado de la carga del módulo porque el side effect de crear
-    directorios al importar config.py es mala práctica (rompería
-    tests que solo quieren leer constantes).
-    """
+    """Crea directorios runtime. Llamar al bootstrap, no al import."""
     for d in (MODELS_DIR, MEMORY_DIR, USER_PHRASES_DIR, IMPORTED_PRIMERS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
 # ===========================================================================
-# Self-check (corrible directamente: `python -m neuraljam.config`)
+# Self-check
 # ===========================================================================
 
 if __name__ == "__main__":
-    # Diagnóstico rápido: imprime el estado del config como lo vería el
-    # resto del sistema. Útil para verificar paths después de mover el
-    # proyecto de carpeta.
     print(f"PROJECT_ROOT:    {PROJECT_ROOT}")
-    print(f"MODE actual:     {MODE}")
+    print(f"MODE default:    {MODE}")
     print(f"MIDI in:         {MIDI_INPUT_NAME!r}")
     print(f"MIDI out:        {MIDI_OUTPUT_NAME!r}")
     print(f"SILENCE_TIMEOUT: {SILENCE_TIMEOUT}s")
+    print(f"Signal range:    MIDI {SIGNAL_NOTE_MIN}-{SIGNAL_NOTE_MAX}")
     print(f"QPM_FALLBACK:    {QPM_FALLBACK}")
     print(f"Progresión:      {CHORD_PROGRESSION!r}")
     print()
-    profile = active_profile()
-    print(f"Perfil activo ('{MODE}'):")
-    for k, v in profile.items():
-        print(f"  {k}: {v}")
-    print()
-    print(f"Modelo existe en disco: {profile['model_path'].exists()}")
+    print("Perfiles disponibles:")
+    for mode_name, prof in PROFILES.items():
+        marker = "* " if mode_name == MODE else "  "
+        print(f"  {marker}{mode_name:12s}  family={prof['model_family']:14s}  "
+              f"chords={prof['needs_chords']}")

@@ -1,20 +1,36 @@
 """
 neuraljam.models — Gestión de modelos de Magenta.
 
-Responsabilidades:
-- Descargar bundles .mag desde la URL del perfil activo (si no existen)
-- Cargar el modelo correspondiente al MODE actual
-- Hacer warmup pass para evitar latencia alta en la primera frase real
-- Exponer un objeto generator listo para que generation/ lo use
+Soporta dos familias en RAM simultáneamente:
+- melody_rnn (MelodyRNN, attention_rnn bundle)
+- improv_rnn (ImprovRNN, chord_pitches_improv bundle)
 
-Submódulos planeados:
-- loader.py: carga el bundle del perfil activo, hace warmup
-- downloader.py: descarga el .mag si no está local
-
-Restricciones:
-- Un solo modelo cargado en RAM a la vez (no hay RAM para más).
-- Cambio de modo implica reiniciar el sistema. No hay hot-swap.
-
-Contrato: el resto del sistema recibe un objeto generator ya warmupeado.
-No conoce el tipo interno del modelo.
+Lazy imports (PEP 562): importar este paquete NO dispara TF.
 """
+
+__all__ = [
+    "LoadedModel",
+    "load_generator",
+    "load_all_models",
+    "warmup",
+    "download_bundle_if_missing",
+]
+
+
+def __getattr__(name):
+    if name in __all__:
+        from neuraljam.models.loader import (
+            LoadedModel,
+            load_generator,
+            load_all_models,
+            warmup,
+            download_bundle_if_missing,
+        )
+        return {
+            "LoadedModel": LoadedModel,
+            "load_generator": load_generator,
+            "load_all_models": load_all_models,
+            "warmup": warmup,
+            "download_bundle_if_missing": download_bundle_if_missing,
+        }[name]
+    raise AttributeError(f"module 'neuraljam.models' has no attribute {name!r}")
