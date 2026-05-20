@@ -67,12 +67,15 @@ def main():
     log.info(f"NeuralJam arrancando, default mode='{config.MODE}'")
 
     # Imports diferidos para que --help no cargue TF.
+    from note_seq.protobuf import music_pb2
+
     from neuraljam.generation import GenerationEngine
     from neuraljam.harmony import Progression
     from neuraljam.memory.bank import MemoryBank
     from neuraljam.midi import MidiOutput, PhraseDetector
     from neuraljam.models import load_all_models
     from neuraljam.playback import Player
+    from neuraljam.scheduler import Scheduler
     from neuraljam.subconscious.engine import SubconsciousEngine, phrase_to_seq
 
     # ---- Bootstrap ------------------------------------------------------
@@ -115,7 +118,8 @@ def main():
 
     bank = MemoryBank(maxlen=8)
     subconscious = SubconsciousEngine(bank)
-    log.info("MemoryBank y SubconsciousEngine inicializados")
+    scheduler = Scheduler(response_probability=0.85, max_consecutive_silences=2)
+    log.info("MemoryBank, SubconsciousEngine y Scheduler inicializados")
 
     # ---- Loop principal -------------------------------------------------
 
@@ -154,13 +158,35 @@ def main():
                 f"--- Turno {turn} --- {len(phrase.notes)} notas, {total_dur:.2f}s"
             )
 
+            # Scheduler: decidir si responder este turno
+            decision = scheduler.should_respond()
+            if decision == "silent":
+                log.info(
+                    f"[SCHEDULER] Silencio intencional "
+                    f"(turno {scheduler.turn_count}). Escuchando..."
+                )
+                # Actualizar banco en background igual (aprendemos aunque callemos)
+                user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
+                subconscious.trigger(user_ns, music_pb2.NoteSequence())
+                continue
+
             # Contexto del subconciente (None en el primer turno)
             context = subconscious.get_context()
             if context is not None:
                 log.debug(f"Contexto subconciente: {len(context.notes)} notas")
 
+            # Temperatura dinámica
+            phrase_dur = phrase.notes[-1].start_time + phrase.notes[-1].duration
+            temp = scheduler.temperature(len(phrase.notes), phrase_dur)
+            log.debug(f"Temperatura: {temp:.3f}")
+
             t0 = time.perf_counter()
-            response = engine.respond(phrase.notes, model_key=key, context_seq=context)
+            response = engine.respond(
+                phrase.notes,
+                model_key=key,
+                context_seq=context,
+                temperature=temp,
+            )
             gen_time = time.perf_counter() - t0
 
             if response is None:
@@ -169,7 +195,8 @@ def main():
 
             log.info(
                 f"Generación: {gen_time:.2f}s | "
-                f"Reproduciendo {response.total_time:.2f}s..."
+                f"Reproduciendo {response.total_time:.2f}s... "
+                f"[temp={temp:.2f}]"
             )
 
             # Disparar subconciente en background MIENTRAS suena la respuesta

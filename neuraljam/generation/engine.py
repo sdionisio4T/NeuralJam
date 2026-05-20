@@ -75,6 +75,7 @@ class GenerationEngine:
         phrase: List[NoteEvent],
         model_key: str,
         context_seq: Optional[music_pb2.NoteSequence] = None,
+        temperature: Optional[float] = None,
     ) -> Optional[music_pb2.NoteSequence]:
         """
         Genera respuesta usando el modelo indicado por model_key.
@@ -84,6 +85,8 @@ class GenerationEngine:
             model_key: "melody" | "improv" | "performance" (si están cargados).
             context_seq: NoteSequence histórica para enriquecer el primer.
                          Generada por SubconsciousEngine. None = sin contexto.
+            temperature: temperatura dinámica (del Scheduler). Si None, usa
+                         el valor fijo del perfil del modelo.
 
         Returns:
             NoteSequence rebasado a t=0 con la respuesta, o None si falla.
@@ -103,7 +106,7 @@ class GenerationEngine:
 
         try:
             input_seq = self._prepare(phrase, loaded, context_seq)
-            full_output = self._generate(input_seq, loaded)
+            full_output = self._generate(input_seq, loaded, temperature)
             response = self._extract(full_output, input_seq)
         except Exception:
             log.exception(f"Falló generación con {model_key}, devuelvo None")
@@ -145,13 +148,17 @@ class GenerationEngine:
         self,
         input_seq: music_pb2.NoteSequence,
         loaded: LoadedModel,
+        temperature: Optional[float] = None,
     ) -> music_pb2.NoteSequence:
         """Llama al generator y mide latencia."""
         primer_end = get_primer_end(input_seq)
         total_end = input_seq.total_time
 
+        # temperature dinámica del Scheduler prevalece sobre el perfil fijo
+        temp = temperature if temperature is not None else float(loaded.profile["temperature"])
+
         options = generator_pb2.GeneratorOptions()
-        options.args["temperature"].float_value = float(loaded.profile["temperature"])
+        options.args["temperature"].float_value = temp
         options.generate_sections.add(
             start_time=primer_end + 0.001,  # epsilon, bug del modelo
             end_time=total_end,
@@ -161,7 +168,7 @@ class GenerationEngine:
         out = loaded.generator.generate(input_seq, options)
         log.debug(
             f"{loaded.family}: primer_end={primer_end:.2f}, "
-            f"total_end={total_end:.2f}, lat={time.time() - t0:.2f}s"
+            f"total_end={total_end:.2f}, temp={temp:.2f}, lat={time.time() - t0:.2f}s"
         )
         return out
 
