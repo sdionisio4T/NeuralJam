@@ -1,0 +1,158 @@
+23:32:34 [INFO] 
+23:32:34 [INFO] ######################################################################
+23:32:35 [INFO] # SPIKE IMPROV_RNN — 2026-05-17T23:32:35
+23:32:35 [INFO] # Python 3.10.11 — cwd C:\AI-Duet-Local\spike_improv
+23:32:35 [INFO] ######################################################################
+23:32:35 [INFO] 
+23:32:35 [INFO] ======================================================================
+23:32:35 [INFO] [FASE 0] Download del bundle
+23:32:35 [INFO] ======================================================================
+23:32:35 [INFO]   URL:    http://download.magenta.tensorflow.org/models/chord_pitches_improv.mag
+23:32:35 [INFO]   Path:   C:\AI-Duet-Local\spike_improv\chord_pitches_improv.mag
+23:32:35 [INFO]   Status: ya existe (5.4 MB), skip download
+23:32:35 [INFO] 
+23:32:35 [INFO] ======================================================================
+23:32:35 [INFO] [FASE 1] Carga del modelo + warmup
+23:32:35 [INFO] ======================================================================
+23:32:35 [INFO]   RAM antes de cargar: 21 MB
+23:32:35 [INFO]   Importando TF + Magenta (esto puede tardar)...
+23:32:56 [INFO]   Imports listos (21.1s)
+23:32:56 [INFO]   Bundle config_id: chord_pitches_improv
+23:32:56 [INFO]   Bundle cargado en 0.3s
+23:32:56 [INFO]   RAM post carga: 377 MB
+23:32:56 [INFO]   Warmup pass (descartado)...
+23:32:57 [INFO]   Warmup en 1.0s (este número es cold-start real)
+23:32:57 [INFO]   RAM post warmup: 409 MB
+23:32:57 [INFO] 
+23:32:57 [INFO] ======================================================================
+23:32:57 [INFO] [FASE 2] Test de notación armónica
+23:32:57 [INFO] ======================================================================
+23:32:57 [INFO]   Primer fijo: C D E F (4 negras), temp=1.0, 2 compases
+23:32:57 [INFO] 
+23:32:57 [INFO]   [triads] 'Dm G C C'
+23:32:57 [INFO]     OK — 6 notas generadas → outputs\notation_triads.mid
+23:32:57 [INFO]   [sevenths] 'Dm7 G7 Cmaj7 Cmaj7'
+23:32:57 [INFO]     OK — 7 notas generadas → outputs\notation_sevenths.mid
+23:32:57 [INFO]   [complex] 'Em7b5 A7b9 Dm6 Dm6'
+23:32:57 [INFO]     OK — 9 notas generadas → outputs\notation_complex.mid
+23:32:57 [INFO]   [slash] 'C/E F/A G/B C'
+23:32:57 [INFO]     OK — 8 notas generadas → outputs\notation_slash.mid
+23:32:57 [INFO]   [invalid] 'XYZ Foo Bar Baz'
+23:32:57 [INFO]     EXCEPCIÓN (ChordSymbolError): Unable to parse chord symbol: XYZ
+23:32:57 [INFO] 
+23:32:57 [INFO]   Resumen notación soportada:
+23:32:57 [INFO]     triads     → OK
+23:32:57 [INFO]     sevenths   → OK
+23:32:57 [INFO]     complex    → OK
+23:32:57 [INFO]     slash      → OK
+23:32:57 [INFO]     invalid    → ERROR
+23:32:57 [INFO] 
+23:32:57 [INFO] ======================================================================
+23:32:57 [INFO] [FASE 3] Latencia (post-warmup)
+23:32:57 [INFO] ======================================================================
+23:32:57 [INFO]   Corridas por longitud: 3
+23:32:57 [INFO]   Progresión: 'Dm7 G7 Cmaj7 Cmaj7' (loopeada por el modelo)
+23:32:57 [INFO] 
+23:32:57 [INFO]    4 compases: ['0.11s', '0.12s', '0.12s'] → mean 0.11s
+23:32:58 [INFO]    8 compases: ['0.23s', '0.20s', '0.25s'] → mean 0.23s
+23:33:00 [INFO]   16 compases: ['0.63s', '0.59s', '0.66s'] → mean 0.63s
+23:33:00 [INFO] 
+23:33:00 [INFO]   RAM pico durante latencia: 410 MB
+23:33:00 [INFO] 
+23:33:00 [INFO] ======================================================================
+23:33:00 [INFO] [FASE 4] Escenarios musicales (para escuchar en Studio One)
+23:33:00 [INFO] ======================================================================
+23:33:00 [INFO]   [escenario_1_major]
+23:33:00 [INFO]     primer:  [60, 62, 64, 65]
+23:33:00 [INFO]     chords:  'Dm7 G7 Cmaj7 Cmaj7'
+23:33:00 [INFO]     temp:    0.8
+23:33:00 [INFO]     12 notas en 0.16s → outputs\escenario_1_major.mid
+23:33:00 [INFO]     para escuchar con contexto: tocá 'Dm7 G7 Cmaj7 Cmaj7' en el piano sobre el playback del .mid
+23:33:00 [INFO] 
+23:33:00 [INFO]   [escenario_2_minor]
+23:33:00 [INFO]     primer:  [59, 62, 65, 69]
+23:33:00 [INFO]     chords:  'Em7b5 A7 Dm7 Dm7'
+23:33:00 [INFO]     temp:    1.0
+23:33:00 [INFO]     15 notas en 0.21s → outputs\escenario_2_minor.mid
+23:33:00 [INFO]     para escuchar con contexto: tocá 'Em7b5 A7 Dm7 Dm7' en el piano sobre el playback del .mid
+23:33:00 [INFO] 
+23:33:00 [INFO]   [escenario_3_high_temp]
+23:33:00 [INFO]     primer:  [60, 62, 64, 65]
+23:33:00 [INFO]     chords:  'Dm7 G7 Cmaj7 Cmaj7'
+23:33:00 [INFO]     temp:    1.2
+23:33:01 [INFO]     14 notas en 0.17s → outputs\escenario_3_high_temp.mid
+23:33:01 [INFO]     para escuchar con contexto: tocá 'Dm7 G7 Cmaj7 Cmaj7' en el piano sobre el playback del .mid
+23:33:01 [INFO] 
+23:33:01 [INFO] 
+23:33:01 [INFO] ======================================================================
+23:33:01 [INFO] [FASE 4b] Primers variados (modelo aislado del sesgo del primer)
+23:33:01 [INFO] ======================================================================
+23:33:01 [INFO]   Mismo escenario armónico que escenario_1: Dm7 G7 Cmaj7 Cmaj7, temp 0.8
+23:33:01 [INFO]   Compara estos contra outputs/escenario_1_major.mid
+23:33:01 [INFO] 
+23:33:01 [INFO]   [escenario_major_bebop]
+23:33:01 [INFO]     primer:  bebop (6 eventos)
+23:33:01 [INFO]     17 notas en 0.15s → outputs\escenario_major_bebop.mid
+23:33:01 [INFO] 
+23:33:01 [INFO]   [escenario_major_syncopated]
+23:33:01 [INFO]     primer:  syncopated (4 eventos)
+23:33:01 [INFO]     9 notas en 0.19s → outputs\escenario_major_syncopated.mid
+23:33:01 [INFO] 
+23:33:01 [INFO]   [escenario_major_chromatic]
+23:33:01 [INFO]     primer:  chromatic (6 eventos)
+23:33:01 [INFO]     13 notas en 0.15s → outputs\escenario_major_chromatic.mid
+23:33:01 [INFO] 
+23:33:01 [INFO] 
+23:33:01 [INFO] ======================================================================
+23:33:01 [INFO] [FASE 4c] Test Em7b5: ¿b5 (Bb) o quinta justa (B)?
+23:33:01 [INFO] ======================================================================
+23:33:01 [INFO]   Primer neutral (E G A, sin B ni Bb), 4 compases de Em7b5 puro
+23:33:01 [INFO]   Si el modelo usa Bb → entiende la b5. Si usa B natural → degrada a Em.
+23:33:01 [INFO] 
+23:33:01 [INFO]   Run 1: 11 notas generadas en 0.13s → outputs\em7b5_test_run1.mid
+23:33:01 [INFO]   Run 2: 11 notas generadas en 0.12s → outputs\em7b5_test_run2.mid
+23:33:01 [INFO]   Run 3: 12 notas generadas en 0.14s → outputs\em7b5_test_run3.mid
+23:33:01 [INFO] 
+23:33:01 [INFO]   Análisis sobre 34 notas generadas (3 runs):
+23:33:01 [INFO]     Bb (b5 de Em7b5)         → 7 ocurrencias
+23:33:01 [INFO]     B  natural (5ª de Em)    → 1 ocurrencias
+23:33:01 [INFO]     Veredicto: modelo PROBABLEMENTE entiende la b5
+23:33:01 [INFO] 
+23:33:01 [INFO] ======================================================================
+23:33:01 [INFO] [RESUMEN]
+23:33:01 [INFO] ======================================================================
+23:33:01 [INFO]   Notación armónica:
+23:33:01 [INFO]     triads     → ok
+23:33:01 [INFO]     sevenths   → ok
+23:33:01 [INFO]     complex    → ok
+23:33:01 [INFO]     slash      → ok
+23:33:01 [INFO]     invalid    → error
+23:33:01 [INFO] 
+23:33:01 [INFO]   Latencia (mean por longitud):
+23:33:01 [INFO]      4 compases: 0.11s
+23:33:01 [INFO]      8 compases: 0.23s
+23:33:01 [INFO]     16 compases: 0.63s
+23:33:01 [INFO] 
+23:33:01 [INFO]   Escenarios musicales (primer cuadrado original):
+23:33:01 [INFO]     escenario_1_major: OK (0.16s) — outputs\escenario_1_major.mid
+23:33:01 [INFO]     escenario_2_minor: OK (0.21s) — outputs\escenario_2_minor.mid
+23:33:01 [INFO]     escenario_3_high_temp: OK (0.17s) — outputs\escenario_3_high_temp.mid
+23:33:01 [INFO] 
+23:33:01 [INFO]   Escenario major con primers variados:
+23:33:01 [INFO]     escenario_major_bebop: OK (0.15s) — outputs\escenario_major_bebop.mid
+23:33:01 [INFO]     escenario_major_syncopated: OK (0.19s) — outputs\escenario_major_syncopated.mid
+23:33:01 [INFO]     escenario_major_chromatic: OK (0.15s) — outputs\escenario_major_chromatic.mid
+23:33:01 [INFO] 
+23:33:01 [INFO]   Test Em7b5 (Bb vs B natural):
+23:33:01 [INFO]     Bb: 7  /  B natural: 1  /  total generadas: 34
+23:33:01 [INFO] 
+23:33:01 [INFO]   Próximos pasos sugeridos según resultados:
+23:33:01 [INFO]     1. Comparar escenario_1_major vs escenario_major_bebop —
+23:33:01 [INFO]        si el bebop suena con mejor groove, el problema era el primer.
+23:33:01 [INFO]     2. Comparar escenario_major_chromatic — si el modelo NO se queda en
+23:33:01 [INFO]        C mayor diatónico, está usando el contexto armónico real.
+23:33:01 [INFO]     3. Escuchar em7b5_test_run*.mid — el conteo Bb vs B es indicativo,
+23:33:01 [INFO]        pero el oído manda (Bb prominente = entiende b5).
+23:33:01 [INFO] 
+23:33:01 [INFO]   Log completo: C:\AI-Duet-Local\spike_improv\spike_log.txt
+23:33:01 [INFO]   MIDIs:        C:\AI-Duet-Local\spike_improv\outputs
