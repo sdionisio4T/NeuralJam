@@ -125,14 +125,19 @@ class SubconsciousEngine:
         user_seq: music_pb2.NoteSequence,
     ) -> Optional[music_pb2.NoteSequence]:
         """
-        Fase 3: intenta generar con ImprovRNN.
-        Fallback: frase aleatoria del banco (Fase 1).
-        """
-        if self._improv_model is not None and user_seq.notes:
-            frag = self._generate_improv_fragment(user_seq)
-            if frag is not None:
-                return frag
+        Contexto para el próximo turno.
 
+        Usa la última frase del USUARIO como contexto — es lo más coherente
+        musicalmente porque viene del mismo estilo y tonalidad.
+        Fallback a frase aleatoria del banco si no hay historial todavía.
+
+        ImprovRNN se reserva solo como modelo de RESPUESTA directa (señal grave),
+        no como generador de contexto — su chord conditioning fijo (Dm7) choca
+        con lo que el usuario toca libremente y produce resultados incoherentes.
+        """
+        last_user = self.bank.get_last_user()
+        if last_user is not None:
+            return last_user
         return self.bank.get_random()
 
     def _generate_improv_fragment(

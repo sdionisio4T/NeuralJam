@@ -30,8 +30,8 @@ class Scheduler:
         self,
         response_probability: float = 0.85,
         max_consecutive_silences: int = 2,
-        base_temperature: float = 1.0,
-        min_temperature: float = 0.75,
+        base_temperature: float = 0.8,
+        min_temperature: float = 0.6,
     ):
         self.response_probability = response_probability
         self.max_consecutive_silences = max_consecutive_silences
@@ -93,10 +93,12 @@ class Scheduler:
             # Proporcional con leve variación
             bars = base + random.choice([-1, 0, 0, 1])
         else:
-            # Desarrollo — extiende la idea
-            bars = base + random.randint(2, 4)
+            # Desarrollo — extiende la idea (máx +2, no +4)
+            bars = base + random.randint(1, 2)
 
-        return max(1, min(8, bars))
+        # Techo duro: nunca más de 3 compases.
+        # Evita respuestas desproporcionadas a frases cortas.
+        return max(1, min(3, bars))
 
     def temperature(self, phrase_note_count: int, phrase_duration: float) -> float:
         """
@@ -119,7 +121,7 @@ class Scheduler:
         density_bonus = min(0.2, density * 0.04)
 
         raw = self.base_temperature * session_factor + density_bonus
-        return max(self.min_temperature, min(1.5, raw))
+        return max(self.min_temperature, min(0.95, raw))
 
     # ------------------------------------------------------------------
     # Diagnóstico

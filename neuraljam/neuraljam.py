@@ -84,6 +84,7 @@ def main():
     from neuraljam.generation.humanize import humanize
     from neuraljam.harmony import Progression
     from neuraljam.memory.bank import MemoryBank
+    from neuraljam.memory.saver import save_phrase
     from neuraljam.midi import MidiOutput, PhraseDetector
     from neuraljam.models import load_all_models
     from neuraljam.playback import Player
@@ -130,6 +131,10 @@ def main():
     detector = PhraseDetector()
     midi_out = MidiOutput()
     player = Player(midi_out)
+
+    # Listener de teclado para guardar frases (tecla 's')
+    save_flag = threading.Event()
+    _start_save_listener(save_flag, log)
 
     bank = MemoryBank(maxlen=8)
     if preload_folder:
@@ -237,6 +242,17 @@ def main():
             subconscious.trigger(user_ns, response)
 
             player.play(response)
+
+            # Guardar si el usuario presionó 's' durante la reproducción
+            if save_flag.is_set():
+                save_flag.clear()
+                save_phrase(user_ns, tag="user")
+                save_phrase(response, tag="ai")
+                log.info(
+                    "Frase guardada en saved_phrases/. "
+                    "Subila a Drive para fine-tuning en Colab."
+                )
+
             log.info("Listo. Tu turno.\n")
 
     except KeyboardInterrupt:
@@ -254,6 +270,28 @@ def main():
         except Exception:
             log.exception("Error cerrando MIDI out (no fatal)")
         log.info("Apagado limpio.")
+
+
+def _start_save_listener(save_flag: threading.Event, log) -> None:
+    """
+    Inicia un thread que escucha la tecla 's' y activa save_flag.
+    Si la librería 'keyboard' no está instalada, lo indica y sigue sin guardar.
+    """
+    def _listen():
+        try:
+            import keyboard
+            keyboard.add_hotkey("s", save_flag.set)
+            log.info("Guardado activo: presioná 's' después de un turno para guardar la frase.")
+            keyboard.wait()
+        except ImportError:
+            log.warning(
+                "Guardado de frases desactivado. "
+                "Para activarlo: pip install keyboard"
+            )
+        except Exception:
+            log.warning("Listener de teclado no disponible (¿falta permisos?).")
+
+    threading.Thread(target=_listen, name="KeyboardListener", daemon=True).start()
 
 
 if __name__ == "__main__":

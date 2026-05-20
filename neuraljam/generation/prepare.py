@@ -89,7 +89,9 @@ def build_input_sequence(
     context_offset = 0.0
 
     if context_seq is not None and context_seq.notes:
-        budget = max_primer_notes // 2
+        # Presupuesto reducido: el contexto no debe dominar el primer.
+        # La frase actual del usuario siempre tiene la última palabra.
+        budget = max(4, max_primer_notes // 4)
         sorted_ctx = sorted(context_seq.notes, key=lambda n: n.start_time)
         if len(sorted_ctx) > budget:
             sorted_ctx = sorted_ctx[-budget:]  # las más recientes
