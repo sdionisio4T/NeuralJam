@@ -180,14 +180,20 @@ class SubconsciousEngine:
             new_n = input_seq.notes.add()
             new_n.CopyFrom(n)
 
-        # Usar el primer acorde de la progresión configurada
+        # Chord annotations cada compás cubriendo toda la secuencia.
+        # ImprovRNN exige que los acordes lleguen hasta end_step — una sola
+        # annotation en t=0 no alcanza y dispara AssertionError.
         first_chord = config.CHORD_PROGRESSION.split()[0]
-        ann = input_seq.text_annotations.add()
-        ann.text = first_chord
-        ann.annotation_type = (
-            music_pb2.NoteSequence.TextAnnotation.CHORD_SYMBOL
-        )
-        ann.time = 0.0
+        bar_dur = (60.0 / qpm) * 4.0
+        t = 0.0
+        while t < total_end:
+            ann = input_seq.text_annotations.add()
+            ann.text = first_chord
+            ann.annotation_type = (
+                music_pb2.NoteSequence.TextAnnotation.CHORD_SYMBOL
+            )
+            ann.time = t
+            t += bar_dur
         input_seq.total_time = total_end
 
         options = generator_pb2.GeneratorOptions()
