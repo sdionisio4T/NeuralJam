@@ -50,6 +50,7 @@ def build_input_sequence(
     steps_per_quarter: int = 4,
     context_seq: Optional[music_pb2.NoteSequence] = None,
     max_primer_notes: int = 32,
+    qpm_override: Optional[float] = None,
 ) -> music_pb2.NoteSequence:
     """
     Construye el input para Magenta.
@@ -71,8 +72,11 @@ def build_input_sequence(
     if not phrase:
         raise ValueError("phrase no puede ser vacía")
 
-    # BPM y bar_dur
-    if progression is not None:
+    # BPM y bar_dur — el clock del DAW tiene prioridad sobre todo lo demás
+    if qpm_override is not None:
+        bpm = qpm_override
+        bar_dur = (60.0 / bpm) * 4.0
+    elif progression is not None:
         bpm = progression.bpm
         bar_dur = progression.bar_duration_sec
     else:

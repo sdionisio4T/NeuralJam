@@ -80,6 +80,7 @@ class GenerationEngine:
         context_seq: Optional[music_pb2.NoteSequence] = None,
         temperature: Optional[float] = None,
         response_bars: Optional[int] = None,
+        qpm_override: Optional[float] = None,
     ) -> Optional[music_pb2.NoteSequence]:
         """
         Genera respuesta usando el modelo indicado por model_key.
@@ -111,7 +112,7 @@ class GenerationEngine:
         loaded = self.models[model_key]
 
         try:
-            input_seq = self._prepare(phrase, loaded, context_seq, response_bars)
+            input_seq = self._prepare(phrase, loaded, context_seq, response_bars, qpm_override)
             full_output = self._generate(input_seq, loaded, temperature)
             response = self._extract(full_output, input_seq)
         except Exception:
@@ -138,6 +139,7 @@ class GenerationEngine:
         loaded: LoadedModel,
         context_seq: Optional[music_pb2.NoteSequence] = None,
         response_bars: Optional[int] = None,
+        qpm_override: Optional[float] = None,
     ) -> music_pb2.NoteSequence:
         """Convierte la frase al input que entiende el modelo."""
         prog = self.progression if loaded.profile["needs_chords"] else None
@@ -150,6 +152,7 @@ class GenerationEngine:
             compress_primer=False,
             steps_per_quarter=loaded.magenta_config.steps_per_quarter,
             context_seq=context_seq,
+            qpm_override=qpm_override,
         )
 
     def _generate(

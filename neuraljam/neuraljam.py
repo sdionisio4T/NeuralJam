@@ -50,6 +50,24 @@ def parse_args():
             "Ej: --preload midi_externos\\bill_evans"
         ),
     )
+    parser.add_argument(
+        "--clock",
+        metavar="PUERTO",
+        default=None,
+        help=(
+            "Puerto MIDI para recibir clock de Studio One. "
+            "Ej: --clock \"S1-Clock\""
+        ),
+    )
+    parser.add_argument(
+        "--sync-beat",
+        action="store_true",
+        default=False,
+        help=(
+            "Esperar al próximo compás antes de reproducir (requiere --clock). "
+            "Desactivado por default — el tempo se sincroniza igual sin esto."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -72,6 +90,8 @@ def main():
     config.MODE = args.mode
     config.ensure_dirs()
     preload_folder = args.preload
+    clock_port = args.clock
+    sync_beat = args.sync_beat
 
     setup_logging(args.debug)
     log = logging.getLogger("neuraljam")
@@ -131,6 +151,17 @@ def main():
     detector = PhraseDetector()
     midi_out = MidiOutput()
     player = Player(midi_out)
+
+    # MIDI Clock (Fase 7) — Studio One como master de tempo
+    clock = None
+    if clock_port:
+        from neuraljam.midi.clock import MidiClock
+        clock = MidiClock(clock_port)
+        clock.start()
+        log.info(
+            f"MIDI Clock activo en '{clock_port}'. "
+            "Presioná Play en Studio One para sincronizar."
+        )
 
     # Listener de teclado para guardar frases (tecla 's')
     save_flag = threading.Event()
@@ -203,11 +234,19 @@ def main():
             if context is not None:
                 log.debug(f"Contexto subconciente: {len(context.notes)} notas")
 
+            # BPM en vivo (del clock) o fallback
+            live_qpm = (
+                clock.qpm if (clock and clock.has_sync)
+                else config.QPM_FALLBACK
+            )
+
             # Temperatura y longitud dinámicas
             phrase_dur = phrase.notes[-1].start_time + phrase.notes[-1].duration
             temp = scheduler.temperature(len(phrase.notes), phrase_dur)
-            bars = scheduler.response_bars(phrase_dur, bpm=config.QPM_FALLBACK)
-            log.debug(f"Temperatura: {temp:.3f} | Compases respuesta: {bars}")
+            bars = scheduler.response_bars(phrase_dur, bpm=live_qpm)
+            log.debug(
+                f"Temperatura: {temp:.3f} | Compases: {bars} | QPM: {live_qpm:.1f}"
+            )
 
             t0 = time.perf_counter()
             response = engine.respond(
@@ -216,6 +255,7 @@ def main():
                 context_seq=context,
                 temperature=temp,
                 response_bars=bars,
+                qpm_override=live_qpm,
             )
             gen_time = time.perf_counter() - t0
 
@@ -223,10 +263,14 @@ def main():
                 log.warning("Sin respuesta (None). Esperando próxima frase.")
                 continue
 
+            # Esperar al próximo downbeat solo si --sync-beat está activo
+            if sync_beat and clock and clock.has_sync:
+                clock.wait_for_downbeat(max_wait_bars=0.75)
+
             log.info(
                 f"Generación: {gen_time:.2f}s | "
                 f"Reproduciendo {response.total_time:.2f}s... "
-                f"[temp={temp:.2f}, bars={bars}]"
+                f"[temp={temp:.2f}, bars={bars}, qpm={live_qpm:.0f}]"
             )
 
             # Swing + humanize antes de reproducir
@@ -234,7 +278,7 @@ def main():
                 response,
                 swing=0.08,
                 velocity_variance=12,
-                qpm=config.QPM_FALLBACK,
+                qpm=live_qpm,
             )
 
             # Disparar subconciente en background MIENTRAS suena la respuesta
