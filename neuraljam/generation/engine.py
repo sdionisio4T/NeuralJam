@@ -22,6 +22,7 @@ Cambio respecto del refactor original:
 """
 
 import logging
+import threading
 import time
 from typing import Dict, List, Optional
 
@@ -60,11 +61,13 @@ class GenerationEngine:
         self,
         models: Dict[str, LoadedModel],
         progression: Optional[Progression] = None,
+        model_lock: Optional[threading.Lock] = None,
     ):
         if not models:
             raise ValueError("models no puede estar vacío")
         self.models = models
         self.progression = progression
+        self._model_lock = model_lock or threading.Lock()
 
     # ----------------------------------------------------------------- #
     # API pública
@@ -76,6 +79,7 @@ class GenerationEngine:
         model_key: str,
         context_seq: Optional[music_pb2.NoteSequence] = None,
         temperature: Optional[float] = None,
+        response_bars: Optional[int] = None,
     ) -> Optional[music_pb2.NoteSequence]:
         """
         Genera respuesta usando el modelo indicado por model_key.
@@ -87,6 +91,8 @@ class GenerationEngine:
                          Generada por SubconsciousEngine. None = sin contexto.
             temperature: temperatura dinámica (del Scheduler). Si None, usa
                          el valor fijo del perfil del modelo.
+            response_bars: compases de respuesta (del Scheduler). Si None,
+                           usa el valor fijo del perfil del modelo.
 
         Returns:
             NoteSequence rebasado a t=0 con la respuesta, o None si falla.
@@ -105,7 +111,7 @@ class GenerationEngine:
         loaded = self.models[model_key]
 
         try:
-            input_seq = self._prepare(phrase, loaded, context_seq)
+            input_seq = self._prepare(phrase, loaded, context_seq, response_bars)
             full_output = self._generate(input_seq, loaded, temperature)
             response = self._extract(full_output, input_seq)
         except Exception:
@@ -131,14 +137,16 @@ class GenerationEngine:
         phrase: List[NoteEvent],
         loaded: LoadedModel,
         context_seq: Optional[music_pb2.NoteSequence] = None,
+        response_bars: Optional[int] = None,
     ) -> music_pb2.NoteSequence:
         """Convierte la frase al input que entiende el modelo."""
         prog = self.progression if loaded.profile["needs_chords"] else None
+        bars = response_bars if response_bars is not None else int(loaded.profile["response_bars"])
 
         return build_input_sequence(
             phrase=phrase,
             progression=prog,
-            response_bars=int(loaded.profile["response_bars"]),
+            response_bars=bars,
             compress_primer=False,
             steps_per_quarter=loaded.magenta_config.steps_per_quarter,
             context_seq=context_seq,
@@ -165,7 +173,8 @@ class GenerationEngine:
         )
 
         t0 = time.time()
-        out = loaded.generator.generate(input_seq, options)
+        with self._model_lock:
+            out = loaded.generator.generate(input_seq, options)
         log.debug(
             f"{loaded.family}: primer_end={primer_end:.2f}, "
             f"total_end={total_end:.2f}, temp={temp:.2f}, lat={time.time() - t0:.2f}s"

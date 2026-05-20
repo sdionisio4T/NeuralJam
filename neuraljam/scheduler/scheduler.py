@@ -70,6 +70,34 @@ class Scheduler:
         self._consecutive_silences = 0
         return "enter"
 
+    def response_bars(self, phrase_duration: float, bpm: float = 120.0) -> int:
+        """
+        Cuántos compases debe responder el modelo.
+
+        Sigue la longitud de la frase del usuario con variación:
+          ~35% : réplica corta (1-2 compases)
+          ~40% : respuesta proporcional a tu frase (±1 compás)
+          ~25% : desarrollo largo (varios compases extra)
+
+        Así unas respuestas son punzantes y otras se despliegan.
+        """
+        bar_dur = (60.0 / bpm) * 4.0
+        user_bars = max(1, round(phrase_duration / bar_dur))
+        base = min(6, user_bars)  # seguimos tu longitud, techo en 6
+
+        roll = random.random()
+        if roll < 0.35:
+            # Réplica corta — puntual, rítmica
+            bars = random.randint(1, max(1, base // 2 + 1))
+        elif roll < 0.75:
+            # Proporcional con leve variación
+            bars = base + random.choice([-1, 0, 0, 1])
+        else:
+            # Desarrollo — extiende la idea
+            bars = base + random.randint(2, 4)
+
+        return max(1, min(8, bars))
+
     def temperature(self, phrase_note_count: int, phrase_duration: float) -> float:
         """
         Temperatura dinámica para MelodyRNN.

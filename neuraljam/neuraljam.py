@@ -22,6 +22,7 @@ Ctrl+C para salir limpio (all-notes-off + close de puertos).
 import argparse
 import logging
 import sys
+import threading
 import time
 
 
@@ -111,13 +112,18 @@ def main():
     progression = Progression.from_config()
     log.info(f"Progresión (solo se usa con improv): {progression!r}")
 
-    engine = GenerationEngine(models, progression)
+    # Lock compartido: garantiza que solo un thread llama a generate() a la vez
+    model_lock = threading.Lock()
+
+    engine = GenerationEngine(models, progression, model_lock=model_lock)
     detector = PhraseDetector()
     midi_out = MidiOutput()
     player = Player(midi_out)
 
     bank = MemoryBank(maxlen=8)
-    subconscious = SubconsciousEngine(bank)
+    subconscious = SubconsciousEngine(bank, model_lock=model_lock)
+    if "improv" in models:
+        subconscious.set_improv_model(models["improv"])
     scheduler = Scheduler(response_probability=0.85, max_consecutive_silences=2)
     log.info("MemoryBank, SubconsciousEngine y Scheduler inicializados")
 
@@ -175,10 +181,11 @@ def main():
             if context is not None:
                 log.debug(f"Contexto subconciente: {len(context.notes)} notas")
 
-            # Temperatura dinámica
+            # Temperatura y longitud dinámicas
             phrase_dur = phrase.notes[-1].start_time + phrase.notes[-1].duration
             temp = scheduler.temperature(len(phrase.notes), phrase_dur)
-            log.debug(f"Temperatura: {temp:.3f}")
+            bars = scheduler.response_bars(phrase_dur, bpm=config.QPM_FALLBACK)
+            log.debug(f"Temperatura: {temp:.3f} | Compases respuesta: {bars}")
 
             t0 = time.perf_counter()
             response = engine.respond(
@@ -186,6 +193,7 @@ def main():
                 model_key=key,
                 context_seq=context,
                 temperature=temp,
+                response_bars=bars,
             )
             gen_time = time.perf_counter() - t0
 
@@ -196,7 +204,7 @@ def main():
             log.info(
                 f"Generación: {gen_time:.2f}s | "
                 f"Reproduciendo {response.total_time:.2f}s... "
-                f"[temp={temp:.2f}]"
+                f"[temp={temp:.2f}, bars={bars}]"
             )
 
             # Disparar subconciente en background MIENTRAS suena la respuesta
