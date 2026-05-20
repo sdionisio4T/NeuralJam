@@ -69,9 +69,11 @@ def main():
     # Imports diferidos para que --help no cargue TF.
     from neuraljam.generation import GenerationEngine
     from neuraljam.harmony import Progression
+    from neuraljam.memory.bank import MemoryBank
     from neuraljam.midi import MidiOutput, PhraseDetector
     from neuraljam.models import load_all_models
     from neuraljam.playback import Player
+    from neuraljam.subconscious.engine import SubconsciousEngine, phrase_to_seq
 
     # ---- Bootstrap ------------------------------------------------------
 
@@ -111,6 +113,10 @@ def main():
     midi_out = MidiOutput()
     player = Player(midi_out)
 
+    bank = MemoryBank(maxlen=8)
+    subconscious = SubconsciousEngine(bank)
+    log.info("MemoryBank y SubconsciousEngine inicializados")
+
     # ---- Loop principal -------------------------------------------------
 
     try:
@@ -148,8 +154,13 @@ def main():
                 f"--- Turno {turn} --- {len(phrase.notes)} notas, {total_dur:.2f}s"
             )
 
+            # Contexto del subconciente (None en el primer turno)
+            context = subconscious.get_context()
+            if context is not None:
+                log.debug(f"Contexto subconciente: {len(context.notes)} notas")
+
             t0 = time.perf_counter()
-            response = engine.respond(phrase.notes, model_key=key)
+            response = engine.respond(phrase.notes, model_key=key, context_seq=context)
             gen_time = time.perf_counter() - t0
 
             if response is None:
@@ -160,6 +171,11 @@ def main():
                 f"Generación: {gen_time:.2f}s | "
                 f"Reproduciendo {response.total_time:.2f}s..."
             )
+
+            # Disparar subconciente en background MIENTRAS suena la respuesta
+            user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
+            subconscious.trigger(user_ns, response)
+
             player.play(response)
             log.info("Listo. Tu turno.\n")
 

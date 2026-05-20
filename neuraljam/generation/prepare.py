@@ -11,6 +11,8 @@ Decisiones:
 1. PRESERVA duración real del fraseo. compress_primer=False por default.
 2. CUANTIZA al step interno del modelo (limitación inherente).
 3. Si progression=None, se calcula bar_dur con QPM_FALLBACK del config.
+4. context_seq opcional: NoteSequence de historia que se antepone al primer
+   del usuario. Permite al modelo ver frases anteriores como contexto.
 """
 
 import math
@@ -46,6 +48,8 @@ def build_input_sequence(
     compress_primer: bool = False,
     velocity_default: int = 80,
     steps_per_quarter: int = 4,
+    context_seq: Optional[music_pb2.NoteSequence] = None,
+    max_primer_notes: int = 32,
 ) -> music_pb2.NoteSequence:
     """
     Construye el input para Magenta.
@@ -58,6 +62,11 @@ def build_input_sequence(
         compress_primer: True para escalar primer a 1 compás (alternativo).
         velocity_default: si una nota tiene velocity=0, usa este.
         steps_per_quarter: resolución del modelo (de magenta_config).
+        context_seq: NoteSequence histórica para anteponer al primer.
+                     Se inserta antes de la frase del usuario para que el
+                     modelo vea continuidad de sesión. None = sin contexto.
+        max_primer_notes: presupuesto total de notas (contexto + frase).
+                          Si se excede, se recorta por el principio.
     """
     if not phrase:
         raise ValueError("phrase no puede ser vacía")
@@ -72,18 +81,39 @@ def build_input_sequence(
 
     step_dur = _seconds_per_step(bpm, steps_per_quarter)
 
-    # ---- Dimensiones temporales ------------------------------------------
+    # ---- Contexto histórico (opcional) -----------------------------------
+    # Tomar hasta max_primer_notes//2 notas del final del contexto.
+    # Las notas del contexto van primero; la frase del usuario las sigue.
+
+    ctx_notes_raw = []
+    context_offset = 0.0
+
+    if context_seq is not None and context_seq.notes:
+        budget = max_primer_notes // 2
+        sorted_ctx = sorted(context_seq.notes, key=lambda n: n.start_time)
+        if len(sorted_ctx) > budget:
+            sorted_ctx = sorted_ctx[-budget:]  # las más recientes
+
+        ctx_t0 = sorted_ctx[0].start_time
+        ctx_dur = max(n.end_time for n in sorted_ctx) - ctx_t0
+        context_offset = _quantize_to_step(ctx_dur, step_dur)
+        if context_offset < step_dur:
+            context_offset = step_dur
+        ctx_notes_raw = sorted_ctx
+
+    # ---- Dimensiones temporales de la frase del usuario ------------------
 
     primer_end_raw = phrase[-1].start_time + phrase[-1].duration
 
     if compress_primer:
         scale = bar_dur / primer_end_raw if primer_end_raw > 0 else 1.0
-        primer_bars = 1
+        phrase_bars = 1
     else:
         scale = 1.0
-        primer_bars = max(1, math.ceil(primer_end_raw / bar_dur))
+        phrase_bars = max(1, math.ceil(primer_end_raw / bar_dur))
 
-    primer_end = primer_bars * bar_dur
+    context_bars = max(1, math.ceil(context_offset / bar_dur)) if context_offset > 0 else 0
+    primer_end = (context_bars + phrase_bars) * bar_dur
     total_end = primer_end + response_bars * bar_dur
 
     # ---- NoteSequence ----------------------------------------------------
@@ -91,9 +121,27 @@ def build_input_sequence(
     seq = music_pb2.NoteSequence()
     seq.tempos.add(qpm=bpm)
 
-    # Notas del primer
+    # Contexto histórico (viene antes de la frase del usuario)
+    if ctx_notes_raw:
+        ctx_t0 = ctx_notes_raw[0].start_time
+        for n in ctx_notes_raw:
+            qs = _quantize_to_step(n.start_time - ctx_t0, step_dur)
+            qe = _quantize_to_step(n.end_time - ctx_t0, step_dur)
+            if qe <= qs:
+                qe = qs + step_dur
+            if qs >= primer_end:
+                continue
+            note = seq.notes.add()
+            note.pitch = n.pitch
+            note.start_time = qs
+            note.end_time = min(qe, primer_end)
+            note.velocity = n.velocity if n.velocity > 0 else velocity_default
+            note.instrument = 0
+            note.program = 0
+
+    # Notas del primer (frase del usuario, desplazadas por context_offset)
     for evt in phrase:
-        scaled_start = evt.start_time * scale
+        scaled_start = evt.start_time * scale + context_offset
         scaled_dur = evt.duration * scale
 
         start_q = _quantize_to_step(scaled_start, step_dur)

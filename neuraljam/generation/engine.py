@@ -74,6 +74,7 @@ class GenerationEngine:
         self,
         phrase: List[NoteEvent],
         model_key: str,
+        context_seq: Optional[music_pb2.NoteSequence] = None,
     ) -> Optional[music_pb2.NoteSequence]:
         """
         Genera respuesta usando el modelo indicado por model_key.
@@ -81,6 +82,8 @@ class GenerationEngine:
         Args:
             phrase: lista de NoteEvent (ya sin nota de señal).
             model_key: "melody" | "improv" | "performance" (si están cargados).
+            context_seq: NoteSequence histórica para enriquecer el primer.
+                         Generada por SubconsciousEngine. None = sin contexto.
 
         Returns:
             NoteSequence rebasado a t=0 con la respuesta, o None si falla.
@@ -99,7 +102,7 @@ class GenerationEngine:
         loaded = self.models[model_key]
 
         try:
-            input_seq = self._prepare(phrase, loaded)
+            input_seq = self._prepare(phrase, loaded, context_seq)
             full_output = self._generate(input_seq, loaded)
             response = self._extract(full_output, input_seq)
         except Exception:
@@ -124,9 +127,9 @@ class GenerationEngine:
         self,
         phrase: List[NoteEvent],
         loaded: LoadedModel,
+        context_seq: Optional[music_pb2.NoteSequence] = None,
     ) -> music_pb2.NoteSequence:
         """Convierte la frase al input que entiende el modelo."""
-        # Pasar la progresión solo si el modelo la usa.
         prog = self.progression if loaded.profile["needs_chords"] else None
 
         return build_input_sequence(
@@ -135,6 +138,7 @@ class GenerationEngine:
             response_bars=int(loaded.profile["response_bars"]),
             compress_primer=False,
             steps_per_quarter=loaded.magenta_config.steps_per_quarter,
+            context_seq=context_seq,
         )
 
     def _generate(
