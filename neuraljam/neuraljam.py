@@ -41,6 +41,15 @@ def parse_args():
         action="store_true",
         help="Logging detallado (DEBUG level)",
     )
+    parser.add_argument(
+        "--preload",
+        metavar="CARPETA",
+        default=None,
+        help=(
+            "Carpeta con MIDIs externos para precargar en el banco de memoria. "
+            "Ej: --preload midi_externos\\bill_evans"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -62,6 +71,7 @@ def main():
 
     config.MODE = args.mode
     config.ensure_dirs()
+    preload_folder = args.preload
 
     setup_logging(args.debug)
     log = logging.getLogger("neuraljam")
@@ -71,6 +81,7 @@ def main():
     from note_seq.protobuf import music_pb2
 
     from neuraljam.generation import GenerationEngine
+    from neuraljam.generation.humanize import humanize
     from neuraljam.harmony import Progression
     from neuraljam.memory.bank import MemoryBank
     from neuraljam.midi import MidiOutput, PhraseDetector
@@ -121,6 +132,12 @@ def main():
     player = Player(midi_out)
 
     bank = MemoryBank(maxlen=8)
+    if preload_folder:
+        log.info(f"Precargando MIDIs desde: {preload_folder}")
+        n = bank.preload(preload_folder, max_files=30, chunk_bars=4)
+        if n == 0:
+            log.warning("Preload: ningún MIDI cargado — verificá la carpeta.")
+
     subconscious = SubconsciousEngine(bank, model_lock=model_lock)
     if "improv" in models:
         subconscious.set_improv_model(models["improv"])
@@ -205,6 +222,14 @@ def main():
                 f"Generación: {gen_time:.2f}s | "
                 f"Reproduciendo {response.total_time:.2f}s... "
                 f"[temp={temp:.2f}, bars={bars}]"
+            )
+
+            # Swing + humanize antes de reproducir
+            response = humanize(
+                response,
+                swing=0.08,
+                velocity_variance=12,
+                qpm=config.QPM_FALLBACK,
             )
 
             # Disparar subconciente en background MIENTRAS suena la respuesta
