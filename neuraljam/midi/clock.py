@@ -134,7 +134,10 @@ class MidiClock:
 
     def _listen(self) -> None:
         try:
-            port = mido.open_input(self._port_name)
+            from neuraljam.midi.ports import resolve_input_port
+            real_name = resolve_input_port(self._port_name)
+            port = mido.open_input(real_name)
+            log.info(f"MIDI Clock: puerto abierto '{real_name}'")
         except Exception as e:
             log.error(
                 f"MIDI Clock: no se pudo abrir '{self._port_name}': {e}\n"

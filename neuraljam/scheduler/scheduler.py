@@ -10,9 +10,16 @@ Reglas:
    Simula que el músico "escucha" antes de volver a tocar.
 3. Temperatura dinámica: más creativa al inicio, más coherente con la
    sesión avanzada. Sube si el usuario toca denso, baja si toca esparso.
+
+Los parámetros de temperatura y response_bars se limitan según el
+ModeConfig activo. Si no se pasa modo, usa los límites de modo normal.
 """
 
 import random
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from neuraljam.modes import ModeConfig
 
 
 class Scheduler:
@@ -45,7 +52,7 @@ class Scheduler:
     # API pública
     # ------------------------------------------------------------------
 
-    def should_respond(self) -> str:
+    def should_respond(self, mode: Optional["ModeConfig"] = None) -> str:
         """
         Decide si el sistema responde en este turno.
 
@@ -56,6 +63,11 @@ class Scheduler:
         Llamar UNA vez por frase recibida (incrementa el contador interno).
         """
         self._turn_count += 1
+
+        # Modo libre: siempre responde, sin silencio probabilístico
+        if mode is not None and mode.always_respond:
+            self._consecutive_silences = 0
+            return "enter"
 
         # Demasiados silencios seguidos → forzar respuesta
         if self._consecutive_silences >= self.max_consecutive_silences:
@@ -70,7 +82,12 @@ class Scheduler:
         self._consecutive_silences = 0
         return "enter"
 
-    def response_bars(self, phrase_duration: float, bpm: float = 120.0) -> int:
+    def response_bars(
+        self,
+        phrase_duration: float,
+        bpm: float = 120.0,
+        mode: Optional["ModeConfig"] = None,
+    ) -> int:
         """
         Cuántos compases debe responder el modelo.
 
@@ -79,8 +96,10 @@ class Scheduler:
           ~40% : respuesta proporcional a tu frase (±1 compás)
           ~25% : desarrollo largo (varios compases extra)
 
-        Así unas respuestas son punzantes y otras se despliegan.
+        El techo se toma del ModeConfig activo (normal=3, libre=5, etc.).
         """
+        bars_max = mode.response_bars_max if mode is not None else 3
+
         bar_dur = (60.0 / bpm) * 4.0
         user_bars = max(1, round(phrase_duration / bar_dur))
         base = min(6, user_bars)  # seguimos tu longitud, techo en 6
@@ -96,11 +115,14 @@ class Scheduler:
             # Desarrollo — extiende la idea (máx +2, no +4)
             bars = base + random.randint(1, 2)
 
-        # Techo duro: nunca más de 3 compases.
-        # Evita respuestas desproporcionadas a frases cortas.
-        return max(1, min(3, bars))
+        return max(1, min(bars_max, bars))
 
-    def temperature(self, phrase_note_count: int, phrase_duration: float) -> float:
+    def temperature(
+        self,
+        phrase_note_count: int,
+        phrase_duration: float,
+        mode: Optional["ModeConfig"] = None,
+    ) -> float:
         """
         Temperatura dinámica para MelodyRNN.
 
@@ -108,11 +130,17 @@ class Scheduler:
         - Empieza en base_temperature y decae suavemente con los turnos
           (el sistema se vuelve más conservador conforme avanza la sesión).
         - Sube hasta +0.2 si el usuario toca denso (muchas notas por segundo).
+        - Se clampea entre mode.temp_min y mode.temp_max (None = sin techo).
 
-        Args:
-            phrase_note_count: número de notas en la frase del usuario.
-            phrase_duration:   duración total de la frase en segundos.
+        Para imitación (temp_min == temp_max), devuelve la temperatura fija.
         """
+        temp_min = mode.temp_min if mode is not None else self.min_temperature
+        temp_max = mode.temp_max if mode is not None else 0.95
+
+        # Imitación: temperatura fija, sin cálculo dinámico
+        if temp_max is not None and temp_min == temp_max:
+            return temp_min
+
         # Factor de sesión: decae de 1.0 a 0.7 en 30 turnos
         session_factor = max(0.7, 1.0 - (self._turn_count / 30) * 0.3)
 
@@ -121,7 +149,10 @@ class Scheduler:
         density_bonus = min(0.2, density * 0.04)
 
         raw = self.base_temperature * session_factor + density_bonus
-        return max(self.min_temperature, min(0.95, raw))
+        raw = max(temp_min, raw)
+        if temp_max is not None:
+            raw = min(temp_max, raw)
+        return raw
 
     # ------------------------------------------------------------------
     # Diagnóstico

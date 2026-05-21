@@ -1,21 +1,14 @@
 """
 neuraljam/midi/phrase_detector.py
 
-Captura frases del teclado MIDI con fidelidad rítmica completa, y
-detecta si la frase termina con una nota en el rango de señal.
+Captura frases del teclado MIDI con fidelidad ritmica completa.
 
-Nuevo en esta versión:
-- El detector ahora devuelve una `Phrase` (dataclass) que combina:
-    - notes: lista de NoteEvent (igual que antes)
-    - has_signal: bool, True si la ÚLTIMA nota cayó en el rango
-      definido por config.SIGNAL_NOTE_MIN/MAX
+Una frase es una secuencia de notas separadas por silencio (>= silence_timeout).
+Cuando el silencio se detecta y hay suficientes notas (>= min_notes), la frase
+se publica en la cola interna y el caller la recibe via wait_for_phrase().
 
-- Cuando has_signal=True, la nota grave se DESCARTA del campo notes.
-  El primer que llega al modelo no la incluye. El stamp es solo control.
-
-- Si la frase queda vacía después de descartar la señal (caso extremo:
-  el usuario toca solo una nota grave), se descarta toda la frase como
-  ruido.
+El cambio de modelo ya no se hace por nota de senal MIDI — se hace desde
+la terminal con teclas 1/2/3 (gestionado en neuraljam.py).
 
 Uso:
     detector = PhraseDetector()
@@ -25,13 +18,11 @@ Uso:
             phrase = detector.wait_for_phrase()
             if phrase is None:
                 continue
-            if phrase.has_signal:
-                # responder con ImprovRNN
-            # ... procesar phrase.notes ...
+            # procesar phrase.notes ...
     finally:
         detector.stop()
 
-Verificación standalone:
+Verificacion standalone:
     python -m neuraljam.midi.phrase_detector
 """
 
@@ -69,13 +60,9 @@ class Phrase:
     """
     Una frase capturada del usuario.
 
-    notes:      List[NoteEvent], ya filtrado (sin la nota de señal).
-                Ordenado cronológicamente por start_time.
-    has_signal: True si la última nota original cayó en el rango grave
-                de señal. En ese caso, esa nota NO está en notes.
+    notes: List[NoteEvent], ordenado cronologicamente por start_time.
     """
     notes: List[NoteEvent] = field(default_factory=list)
-    has_signal: bool = False
 
 
 # ===========================================================================
@@ -86,11 +73,10 @@ class PhraseDetector:
     """
     Detecta y captura frases del teclado MIDI.
 
-    Parámetros (todos opcionales; default desde config):
+    Parametros (todos opcionales; default desde config):
         port_name: nombre exacto/prefijo del puerto MIDI input
         silence_timeout: segundos de silencio para disparar fin de frase
-        min_notes: mínimo de notas para considerar la frase válida
-        signal_min/signal_max: rango (inclusive) de la nota de señal grave
+        min_notes: minimo de notas para considerar la frase valida
     """
 
     def __init__(
@@ -98,8 +84,6 @@ class PhraseDetector:
         port_name: Optional[str] = None,
         silence_timeout: Optional[float] = None,
         min_notes: Optional[int] = None,
-        signal_min: Optional[int] = None,
-        signal_max: Optional[int] = None,
     ):
         self.port_name = port_name or config.MIDI_INPUT_NAME
         self.silence_timeout = (
@@ -110,8 +94,6 @@ class PhraseDetector:
             min_notes if min_notes is not None
             else config.MIN_NOTES_TO_RESPOND
         )
-        self.signal_min = signal_min if signal_min is not None else config.SIGNAL_NOTE_MIN
-        self.signal_max = signal_max if signal_max is not None else config.SIGNAL_NOTE_MAX
 
         # --- Estado del listener ---
         self._port = None
@@ -126,12 +108,12 @@ class PhraseDetector:
         self._phrase_queue: Queue = Queue()
 
     # =====================================================================
-    # API pública
+    # API publica
     # =====================================================================
 
     def start(self) -> None:
         if self._listener_thread is not None and self._listener_thread.is_alive():
-            log.warning("PhraseDetector ya está corriendo, ignoring start()")
+            log.warning("PhraseDetector ya esta corriendo, ignoring start()")
             return
 
         try:
@@ -155,8 +137,7 @@ class PhraseDetector:
         self._listener_thread.start()
         log.info(
             f"PhraseDetector escuchando '{self.port_name}' "
-            f"(silencio={self.silence_timeout}s, min_notas={self.min_notes}, "
-            f"signal=MIDI[{self.signal_min}-{self.signal_max}])"
+            f"(silencio={self.silence_timeout}s, min_notas={self.min_notes})"
         )
 
     def stop(self) -> None:
@@ -165,7 +146,7 @@ class PhraseDetector:
         self._stop_event.set()
         self._listener_thread.join(timeout=2.0)
         if self._listener_thread.is_alive():
-            log.warning("Listener thread no terminó en 2s, forzando cierre")
+            log.warning("Listener thread no termino en 2s, forzando cierre")
         self._listener_thread = None
 
         if self._port is not None:
@@ -182,8 +163,7 @@ class PhraseDetector:
         Bloquea hasta que haya una frase lista o timeout.
 
         Returns:
-            Phrase o None si timeout. La Phrase tiene notes ya filtrada
-            (sin la nota de señal si has_signal=True).
+            Phrase o None si timeout.
         """
         try:
             return self._phrase_queue.get(timeout=timeout)
@@ -258,41 +238,17 @@ class PhraseDetector:
             self._reset_phrase()
             return
 
-        # Ordenar cronológicamente.
-        ordered = sorted(
+        # Ordenar cronologicamente.
+        notes = sorted(
             self._completed,
             key=lambda e: (e.start_time, e.pitch),
         )
 
-        # Detección de señal: la ÚLTIMA nota cae en el rango grave?
-        last_note = ordered[-1]
-        has_signal = self.signal_min <= last_note.pitch <= self.signal_max
-
-        # Si hay señal, descartar esa nota del primer (decisión A2).
-        if has_signal:
-            notes = ordered[:-1]
-            log.info(
-                f"[SIGNAL] Última nota MIDI {last_note.pitch} está en rango grave. "
-                f"Se descarta del primer. Próximo turno: ImprovRNN."
-            )
-        else:
-            notes = ordered
-
-        # Si después de quitar señal queda vacío o menos del mínimo, descartar.
-        if len(notes) < self.min_notes:
-            log.debug(
-                f"Frase descartada tras filtrar señal: "
-                f"{len(notes)} notas (min {self.min_notes})"
-            )
-            self._reset_phrase()
-            return
-
         total_dur = notes[-1].start_time + notes[-1].duration
         log.info(
-            f"Frase capturada: {len(notes)} notas, {total_dur:.2f}s, "
-            f"signal={has_signal}"
+            f"Frase capturada: {len(notes)} notas, {total_dur:.2f}s"
         )
-        self._phrase_queue.put(Phrase(notes=notes, has_signal=has_signal))
+        self._phrase_queue.put(Phrase(notes=notes))
         self._reset_phrase()
 
     def _reset_phrase(self) -> None:
@@ -327,22 +283,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     print(f"Listening en '{detector.port_name}'.")
-    print(f"Rango de señal: MIDI {detector.signal_min}-{detector.signal_max}")
     print()
-    print("Probá:")
-    print("  1) Tocá una frase normal. La frase llega con has_signal=False.")
-    print("  2) Tocá una frase y terminá con una tecla MUY grave. La frase llega")
-    print(f"     con has_signal=True y SIN la nota grave en notes.")
-    print()
-    print("Ctrl+C para salir.\n")
+    print("Toca frases. Ctrl+C para salir.\n")
 
     try:
         while True:
             phrase = detector.wait_for_phrase()
             if phrase is None:
                 continue
-            tag = "🚨 SIGNAL" if phrase.has_signal else "        "
-            print(f"\n=== {tag} Frase ({len(phrase.notes)} notas) ===")
+            print(f"\n=== Frase ({len(phrase.notes)} notas) ===")
             for i, evt in enumerate(phrase.notes):
                 print(f"  [{i:2d}] pitch={evt.pitch:3d}  "
                       f"start={evt.start_time:6.3f}s  "
@@ -350,7 +299,7 @@ if __name__ == "__main__":
                       f"vel={evt.velocity:3d}")
             if phrase.notes:
                 total = phrase.notes[-1].start_time + phrase.notes[-1].duration
-                print(f"  Duración total: {total:.2f}s")
+                print(f"  Duracion total: {total:.2f}s")
             print()
     except KeyboardInterrupt:
         print("\nDeteniendo...")

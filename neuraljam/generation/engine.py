@@ -145,12 +145,19 @@ class GenerationEngine:
         prog = self.progression if loaded.profile["needs_chords"] else None
         bars = response_bars if response_bars is not None else int(loaded.profile["response_bars"])
 
+        # PerformanceRNN usa steps_per_second en lugar de steps_per_quarter.
+        # Para build_input_sequence usamos el fallback del config cuando no existe.
+        from neuraljam import config as _cfg
+        steps_per_quarter = getattr(
+            loaded.magenta_config, "steps_per_quarter", _cfg.STEPS_PER_QUARTER
+        )
+
         return build_input_sequence(
             phrase=phrase,
             progression=prog,
             response_bars=bars,
             compress_primer=False,
-            steps_per_quarter=loaded.magenta_config.steps_per_quarter,
+            steps_per_quarter=steps_per_quarter,
             context_seq=context_seq,
             qpm_override=qpm_override,
         )

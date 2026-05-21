@@ -39,7 +39,7 @@ class LoadedModel:
     generator: Any
     magenta_config: Any
     profile: dict
-    family: str    # "melody_rnn" | "improv_rnn"
+    family: str    # "melody_rnn" | "improv_rnn" | "performance_rnn"
 
 
 # ===========================================================================
@@ -141,11 +141,42 @@ def _build_melody_generator(bundle_path: Path, profile: dict):
     return gen, cfg
 
 
-# Registry de builders por familia. Para agregar PerformanceRNN basta
-# con sumar una entrada acá y la función _build_perf_generator.
+def _build_performance_generator(bundle_path: Path, profile: dict):
+    from magenta.models.performance_rnn import performance_sequence_generator
+    from magenta.models.performance_rnn.performance_model import (
+        PerformanceRnnModel, default_configs,
+    )
+    from magenta.models.shared.sequence_generator_bundle import read_bundle_file
+
+    bundle = read_bundle_file(str(bundle_path))
+    config_id = bundle.generator_details.id
+    if config_id != profile["model_config_id"]:
+        raise RuntimeError(
+            f"Bundle config_id mismatch. Esperaba {profile['model_config_id']!r}, "
+            f"bundle dice {config_id!r}."
+        )
+    if config_id not in default_configs:
+        raise RuntimeError(
+            f"config_id {config_id!r} no encontrado en default_configs de PerformanceRNN. "
+            f"Conocidos: {list(default_configs)}"
+        )
+    cfg = default_configs[config_id]
+    gen = performance_sequence_generator.PerformanceRnnSequenceGenerator(
+        model=PerformanceRnnModel(cfg),
+        details=cfg.details,
+        steps_per_second=cfg.steps_per_second,
+        num_velocity_bins=cfg.num_velocity_bins,
+        checkpoint=None,
+        bundle=bundle,
+    )
+    return gen, cfg
+
+
+# Registry de builders por familia.
 _BUILDERS = {
-    "improv_rnn": _build_improv_generator,
     "melody_rnn": _build_melody_generator,
+    "improv_rnn": _build_improv_generator,
+    "performance_rnn": _build_performance_generator,
 }
 
 

@@ -23,6 +23,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = PROJECT_ROOT / "models_data"
 MEMORY_DIR = PROJECT_ROOT / "memory_data"
 
+# MusicVAE (Fase 4) — contexto por interpolación latente
+# cat-mel_2bar_big: 2 compases, 512-dim latente, ~26 MB
+MUSIC_VAE_CHECKPOINT_DIR = MODELS_DIR / "cat-mel_2bar_big"
+MUSIC_VAE_URL = (
+    "https://storage.googleapis.com/magentadata/models/"
+    "music_vae/checkpoints/cat-mel_2bar_big.tar"
+)
+
 
 # ===========================================================================
 # Modo activo (modelo default)
@@ -41,6 +49,7 @@ MODE = "melody"
 
 MIDI_INPUT_NAME = "CASIO USB-MIDI"
 MIDI_OUTPUT_NAME = "AI-Duet-OUT"
+MIDI_CLOCK_PORT = "s1-Clock"   # loopMIDI port para recibir clock de Studio One
 
 
 # ===========================================================================
@@ -64,8 +73,17 @@ MIN_NOTES_TO_RESPOND = 2
 # Cambiarlo si querés rango más amplio o más restrictivo. Para usar UNA
 # sola nota: SIGNAL_NOTE_MIN == SIGNAL_NOTE_MAX.
 
-SIGNAL_NOTE_MIN = 21    # A0
-SIGNAL_NOTE_MAX = 28    # E1
+# Señal de cambio de modelo — rango grave dividido en dos zonas:
+#   A0–C1  (21-24) → ImprovRNN    (chord-aware, armónico)
+#   C#1–E1 (25-28) → PerformanceRNN (polofónico, expresivo, libre)
+SIGNAL_IMPROV_MIN = 21   # A0
+SIGNAL_IMPROV_MAX = 24   # C1
+SIGNAL_PERF_MIN   = 25   # C#1
+SIGNAL_PERF_MAX   = 28   # E1
+
+# Aliases de backward-compat (rango total de señal)
+SIGNAL_NOTE_MIN = SIGNAL_IMPROV_MIN
+SIGNAL_NOTE_MAX = SIGNAL_PERF_MAX
 
 
 # ===========================================================================

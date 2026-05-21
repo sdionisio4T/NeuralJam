@@ -1,20 +1,24 @@
 """
 neuraljam.py — Entry point principal.
 
-Orquesta dúo MIDI con dos modelos en RAM:
-    - MelodyRNN (default): dialoga con tu frase, responde melódicamente.
-    - ImprovRNN: aparece cuando terminás una frase con una nota grave
-      (rango definido en config.SIGNAL_NOTE_MIN/MAX).
+Orquesta duo MIDI con tres modelos en RAM:
+    - MelodyRNN      (tecla 1): respuesta melodica, cuantizada, default.
+    - ImprovRNN      (tecla 2): chord-conditioned, armonico.
+    - PerformanceRNN (tecla 3): polifonico, expresivo, alta resolucion.
+
+Cambio de modelo en caliente: presiона 1, 2 o 3 en la terminal mientras
+el sistema corre. El cambio es inmediato — aplica a la siguiente frase.
 
 Flujo:
-    Casio → PhraseDetector → (señal?) → engine.respond(phrase, model_key)
-                                                ↓
-                                  Player → MidiOutput → Studio One
+    Casio -> PhraseDetector -> engine.respond(phrase, model_key)
+                                        |
+                          Player -> MidiOutput -> Studio One
 
 Uso:
-    python neuraljam.py                  # default melody
-    python neuraljam.py --mode improv    # default improv (señal cambia a melody)
-    python neuraljam.py --debug          # logging detallado
+    python neuraljam.py                     # arranca con melody
+    python neuraljam.py --mode improv       # arranca con improv
+    python neuraljam.py --debug             # logging detallado
+    python neuraljam.py --clock "s1-Clock"  # sincroniza con Studio One
 
 Ctrl+C para salir limpio (all-notes-off + close de puertos).
 """
@@ -53,10 +57,10 @@ def parse_args():
     parser.add_argument(
         "--clock",
         metavar="PUERTO",
-        default=None,
+        default=None,  # None = usa config.MIDI_CLOCK_PORT
         help=(
             "Puerto MIDI para recibir clock de Studio One. "
-            "Ej: --clock \"S1-Clock\""
+            f"Default: config.MIDI_CLOCK_PORT. Ej: --clock \"S1-Clock\""
         ),
     )
     parser.add_argument(
@@ -90,7 +94,8 @@ def main():
     config.MODE = args.mode
     config.ensure_dirs()
     preload_folder = args.preload
-    clock_port = args.clock
+    # Si no se pasó --clock, usar el puerto del config como default
+    clock_port = args.clock if args.clock is not None else config.MIDI_CLOCK_PORT
     sync_beat = args.sync_beat
 
     setup_logging(args.debug)
@@ -109,6 +114,7 @@ def main():
     from neuraljam.models import load_all_models
     from neuraljam.playback import Player
     from neuraljam.scheduler import Scheduler
+    from neuraljam.modes import MODES, next_mode
     from neuraljam.subconscious.engine import SubconsciousEngine, phrase_to_seq
 
     # ---- Bootstrap ------------------------------------------------------
@@ -129,17 +135,13 @@ def main():
         )
         default_key = list(models.keys())[0]
 
-    # Decidir el "otro" para la señal. Solo tiene sentido si hay >1 modelo.
-    if "melody" in models and "improv" in models:
-        other_key = "improv" if default_key == "melody" else "melody"
-    else:
-        other_key = default_key  # solo un modelo cargado, señal no hace nada
-        log.warning(
-            f"Solo un modelo cargado: la señal no va a cambiar nada. "
-            f"Cargados: {list(models.keys())}"
-        )
+    # Estado de modelo compartido: se actualiza desde el hilo del teclado.
+    model_state = {"current": default_key}
 
-    log.info(f"Default: {default_key.upper()} | Con señal: {other_key.upper()}")
+    log.info(
+        f"Modelos cargados: {[k.upper() for k in models]} | "
+        f"Activo al arrancar: {default_key.upper()}RNN"
+    )
 
     progression = Progression.from_config()
     log.info(f"Progresión (solo se usa con improv): {progression!r}")
@@ -163,9 +165,14 @@ def main():
             "Presioná Play en Studio One para sincronizar."
         )
 
-    # Listener de teclado para guardar frases (tecla 's')
+    # Listener de teclado: guardar [s], modelo [1/2/3], modo [m], baseline [b]
     save_flag = threading.Event()
+    mode_state = {"current": "normal"}
+    baseline_state = {"active": False, "prev_mode": "normal"}
     _start_save_listener(save_flag, log)
+    _start_model_switcher(models, model_state, log)
+    _start_mode_cycler(mode_state, log)
+    _start_baseline_listener(baseline_state, mode_state, log)
 
     bank = MemoryBank(maxlen=8)
     if preload_folder:
@@ -178,7 +185,29 @@ def main():
     if "improv" in models:
         subconscious.set_improv_model(models["improv"])
     scheduler = Scheduler(response_probability=0.85, max_consecutive_silences=2)
-    log.info("MemoryBank, SubconsciousEngine y Scheduler inicializados")
+    log.info(
+        "MemoryBank, SubconsciousEngine y Scheduler inicializados  |  "
+        "Modo: NORMAL  |  [m] para ciclar modos"
+    )
+
+    # MusicVAE (Fase 4) — contexto por interpolación en espacio latente.
+    # MelodyRNN SIEMPRE responde; MusicVAE solo enriquece el context_seq.
+    # Si no se puede cargar, el sistema sigue funcionando con banco directo.
+    try:
+        from neuraljam.models.music_vae_loader import load_music_vae
+        music_vae = load_music_vae(
+            config.MUSIC_VAE_CHECKPOINT_DIR,
+            config.MUSIC_VAE_URL,
+        )
+        if music_vae:
+            subconscious.set_music_vae(music_vae)
+        else:
+            log.warning(
+                "MusicVAE no disponible — contexto desde banco directamente. "
+                "El sistema funciona igual."
+            )
+    except Exception:
+        log.warning("MusicVAE: error al intentar cargar (no fatal).", exc_info=True)
 
     # ---- Loop principal -------------------------------------------------
 
@@ -186,11 +215,7 @@ def main():
         detector.start()
         midi_out.open()
         log.info(
-            "Sistema listo. Tocá una frase y esperá la respuesta. Ctrl+C para salir."
-        )
-        log.info(
-            f"Para invocar {other_key.upper()}: terminá tu frase con una nota "
-            f"en MIDI {config.SIGNAL_NOTE_MIN}-{config.SIGNAL_NOTE_MAX}."
+            "Sistema listo. Toca una frase y espera la respuesta. Ctrl+C para salir."
         )
 
         turn = 0
@@ -202,12 +227,22 @@ def main():
                 continue
 
             turn += 1
-            # Decidir qué modelo usar
-            key = other_key if phrase.has_signal else default_key
+            # Modo activo (cicla con [m])
+            current_mode = MODES[mode_state["current"]]
 
-            # Log de modelo: switch si cambió, normal si no
+            # Modelo elegido por el usuario desde la terminal (teclas 1/2/3).
+            # Si el modelo seleccionado no está cargado, cae al default.
+            key = model_state["current"]
+            if key not in models:
+                log.warning(
+                    f"Modelo '{key}' no esta cargado. Usando {default_key}."
+                )
+                key = default_key
+                model_state["current"] = default_key
+
+            # Log: avisa solo cuando cambia el modelo
             if key != last_key:
-                log.info(f"[MODEL SWITCH] -> {key.upper()}RNN")
+                log.info(f"[MODEL] {key.upper()}RNN  (cambio)")
             else:
                 log.info(f"[MODEL] {key.upper()}RNN")
             last_key = key
@@ -217,36 +252,42 @@ def main():
                 f"--- Turno {turn} --- {len(phrase.notes)} notas, {total_dur:.2f}s"
             )
 
-            # Scheduler: decidir si responder este turno
-            decision = scheduler.should_respond()
-            if decision == "silent":
-                log.info(
-                    f"[SCHEDULER] Silencio intencional "
-                    f"(turno {scheduler.turn_count}). Escuchando..."
-                )
-                # Actualizar banco en background igual (aprendemos aunque callemos)
-                user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
-                subconscious.trigger(user_ns, music_pb2.NoteSequence())
-                continue
-
-            # Contexto del subconciente (None en el primer turno)
-            context = subconscious.get_context()
-            if context is not None:
-                log.debug(f"Contexto subconciente: {len(context.notes)} notas")
-
-            # BPM en vivo (del clock) o fallback
+            # BPM en vivo (del clock) o fallback — se necesita antes del if/else
             live_qpm = (
                 clock.qpm if (clock and clock.has_sync)
                 else config.QPM_FALLBACK
             )
 
-            # Temperatura y longitud dinámicas
-            phrase_dur = phrase.notes[-1].start_time + phrase.notes[-1].duration
-            temp = scheduler.temperature(len(phrase.notes), phrase_dur)
-            bars = scheduler.response_bars(phrase_dur, bpm=live_qpm)
-            log.debug(
-                f"Temperatura: {temp:.3f} | Compases: {bars} | QPM: {live_qpm:.1f}"
-            )
+            # ---- Baseline ([b]) — modelo limpio, sin capas -----------------
+            if baseline_state["active"]:
+                log.info(f"[BASELINE] {key.upper()}RNN — sin scheduler, sin contexto")
+                context = None
+                temp = 1.0
+                bars = 2
+
+            # ---- Modo normal/imitación/libre/experimental ------------------
+            else:
+                # Scheduler: decidir si responder este turno
+                decision = scheduler.should_respond(mode=current_mode)
+                if decision == "silent":
+                    log.info(
+                        f"[SCHEDULER] Silencio intencional "
+                        f"(turno {scheduler.turn_count}). Escuchando..."
+                    )
+                    user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
+                    subconscious.trigger(user_ns, music_pb2.NoteSequence(), mode=current_mode)
+                    continue
+
+                context = subconscious.get_context() if current_mode.use_memory else None
+                if context is not None:
+                    log.debug(f"Contexto subconciente: {len(context.notes)} notas")
+
+                phrase_dur = phrase.notes[-1].start_time + phrase.notes[-1].duration
+                temp = scheduler.temperature(len(phrase.notes), phrase_dur, mode=current_mode)
+                bars = scheduler.response_bars(phrase_dur, bpm=live_qpm, mode=current_mode)
+                log.debug(
+                    f"[{current_mode.display}] Temperatura: {temp:.3f} | Compases: {bars} | QPM: {live_qpm:.1f}"
+                )
 
             t0 = time.perf_counter()
             response = engine.respond(
@@ -281,9 +322,11 @@ def main():
                 qpm=live_qpm,
             )
 
-            # Disparar subconciente en background MIENTRAS suena la respuesta
             user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
-            subconscious.trigger(user_ns, response)
+
+            # Subconciente en background solo fuera de baseline
+            if not baseline_state["active"]:
+                subconscious.trigger(user_ns, response, mode=current_mode)
 
             player.play(response)
 
@@ -314,6 +357,99 @@ def main():
         except Exception:
             log.exception("Error cerrando MIDI out (no fatal)")
         log.info("Apagado limpio.")
+
+
+def _start_model_switcher(models: dict, model_state: dict, log) -> None:
+    """
+    Teclas 1/2/3 para cambiar el modelo activo en caliente.
+
+    El mapeo es dinamico: si solo hay 2 modelos cargados, [1] y [2].
+    Si el modelo no esta cargado, la tecla no hace nada.
+
+    model_state: dict con clave "current" (string del modelo activo).
+    """
+    available = list(models.keys())
+    key_map = {str(i + 1): name for i, name in enumerate(available) if i < 9}
+
+    def _make_switch(name):
+        def _do():
+            model_state["current"] = name
+            log.info(f"\n>>> Modelo: {name.upper()}RNN <<<\n")
+        return _do
+
+    def _listen():
+        try:
+            import keyboard
+            for key, name in key_map.items():
+                keyboard.add_hotkey(key, _make_switch(name))
+            hint = "   ".join(f"[{k}] {v.upper()}" for k, v in key_map.items())
+            log.info(f"Modelos disponibles -> {hint}   [s] guardar frase")
+            keyboard.wait()
+        except ImportError:
+            log.warning("Selector de modelo desactivado -- pip install keyboard")
+        except Exception:
+            log.warning("Selector de modelo no disponible.", exc_info=True)
+
+    threading.Thread(target=_listen, name="ModelSwitcher", daemon=True).start()
+
+
+def _start_baseline_listener(baseline_state: dict, mode_state: dict, log) -> None:
+    """
+    Tecla [b] para activar/desactivar baseline.
+
+    Baseline activo: el modelo corre limpio — sin scheduler, sin contexto,
+    sin subconciente. Temperatura 1.0, 2 compases fijos.
+    Sirve para comparar si las capas realmente mejoran el resultado.
+    [b] de nuevo vuelve al modo anterior.
+    """
+    def _toggle():
+        if baseline_state["active"]:
+            baseline_state["active"] = False
+            prev = baseline_state["prev_mode"]
+            mode_state["current"] = prev
+            log.info(f"\n>>> BASELINE desactivado — volviendo a {prev.upper()} <<<\n")
+        else:
+            baseline_state["prev_mode"] = mode_state["current"]
+            baseline_state["active"] = True
+            log.info("\n>>> BASELINE activo — subconciente desactivado <<<\n")
+
+    def _listen():
+        try:
+            import keyboard
+            keyboard.add_hotkey("b", _toggle)
+            keyboard.wait()
+        except ImportError:
+            log.warning("Baseline desactivado -- pip install keyboard")
+        except Exception:
+            log.warning("Listener de baseline no disponible.", exc_info=True)
+
+    threading.Thread(target=_listen, name="BaselineListener", daemon=True).start()
+
+
+def _start_mode_cycler(mode_state: dict, log) -> None:
+    """
+    Tecla [m] para ciclar entre modos: normal → imitación → libre → experimental.
+    El modo actual se almacena en mode_state["current"].
+    """
+    from neuraljam.modes import next_mode, MODES
+
+    def _cycle():
+        current = mode_state["current"]
+        nxt = next_mode(current)
+        mode_state["current"] = nxt
+        log.info(f"\n>>> Modo: {MODES[nxt].display} <<<\n")
+
+    def _listen():
+        try:
+            import keyboard
+            keyboard.add_hotkey("m", _cycle)
+            keyboard.wait()
+        except ImportError:
+            log.warning("Selector de modo desactivado -- pip install keyboard")
+        except Exception:
+            log.warning("Selector de modo no disponible.", exc_info=True)
+
+    threading.Thread(target=_listen, name="ModeCycler", daemon=True).start()
 
 
 def _start_save_listener(save_flag: threading.Event, log) -> None:
