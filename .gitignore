@@ -7,3 +7,16 @@ dist/
 build/
 .cache/
 .env
+
+# Modelos descargados (binarios grandes)
+models_data/
+
+# Frases guardadas para fine-tuning
+saved_phrases/
+
+# Logs
+*.log
+neuraljam.log
+
+# Datos de memoria de sesión en disco
+memory_data/
