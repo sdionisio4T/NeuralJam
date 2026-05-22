@@ -114,6 +114,7 @@ def main():
     from neuraljam.models import load_all_models
     from neuraljam.playback import Player
     from neuraljam.scheduler import Scheduler
+    from neuraljam.analysis.groove import GrooveEngine
     from neuraljam.modes import MODES, next_mode
     from neuraljam.recording import SessionRecorder
     from neuraljam.subconscious.engine import SubconsciousEngine, phrase_to_seq
@@ -183,6 +184,7 @@ def main():
             log.warning("Preload: ningún MIDI cargado — verificá la carpeta.")
 
     recorder = SessionRecorder()
+    groove = GrooveEngine()
     subconscious = SubconsciousEngine(bank, model_lock=model_lock)
     if "improv" in models:
         subconscious.set_improv_model(models["improv"])
@@ -325,6 +327,14 @@ def main():
             )
 
             user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
+
+            # Groove: analizar perfil rítmico de la frase del usuario
+            groove_profile = groove.update(user_ns, response, qpm=live_qpm)
+            log.debug(
+                f"[GROOVE] {groove_profile}  "
+                f"→ temp_delta={groove.temperature_delta():+.2f}  "
+                f"bars_hint={groove.bars_hint()}"
+            )
 
             # Subconciente en background solo fuera de baseline
             if not baseline_state["active"]:
