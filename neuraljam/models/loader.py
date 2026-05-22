@@ -141,6 +141,36 @@ def _build_melody_generator(bundle_path: Path, profile: dict):
     return gen, cfg
 
 
+def _build_polyphony_generator(bundle_path: Path, profile: dict):
+    from magenta.models.polyphony_rnn import polyphony_sequence_generator
+    from magenta.models.polyphony_rnn.polyphony_model import (
+        PolyphonyRnnModel, default_configs,
+    )
+    from magenta.models.shared.sequence_generator_bundle import read_bundle_file
+
+    bundle = read_bundle_file(str(bundle_path))
+    config_id = bundle.generator_details.id
+    if config_id != profile["model_config_id"]:
+        raise RuntimeError(
+            f"Bundle config_id mismatch. Esperaba {profile['model_config_id']!r}, "
+            f"bundle dice {config_id!r}."
+        )
+    if config_id not in default_configs:
+        raise RuntimeError(
+            f"config_id {config_id!r} no encontrado en default_configs de PolyphonyRNN. "
+            f"Conocidos: {list(default_configs)}"
+        )
+    cfg = default_configs[config_id]
+    gen = polyphony_sequence_generator.PolyphonyRnnSequenceGenerator(
+        model=PolyphonyRnnModel(cfg),
+        details=cfg.details,
+        steps_per_quarter=cfg.steps_per_quarter,
+        checkpoint=None,
+        bundle=bundle,
+    )
+    return gen, cfg
+
+
 def _build_performance_generator(bundle_path: Path, profile: dict):
     from magenta.models.performance_rnn import performance_sequence_generator
     from magenta.models.performance_rnn.performance_model import (
@@ -177,6 +207,7 @@ _BUILDERS = {
     "melody_rnn": _build_melody_generator,
     "improv_rnn": _build_improv_generator,
     "performance_rnn": _build_performance_generator,
+    "polyphony_rnn": _build_polyphony_generator,
 }
 
 

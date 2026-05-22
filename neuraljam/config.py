@@ -130,12 +130,44 @@ PROFILES = {
         "needs_chords": True,
         "polyphonic": False,
     },
-    # Performance todavía no implementado.
     "performance": {
         "model_family": "performance_rnn",
         "model_path": MODELS_DIR / "performance_with_dynamics.mag",
         "model_url": "http://download.magenta.tensorflow.org/models/performance_with_dynamics.mag",
         "model_config_id": "performance_with_dynamics",
+        "temperature": 1.0,
+        "response_bars": 4,
+        "needs_chords": False,
+        "polyphonic": True,
+    },
+    # MelodyRNN con ventana de 2 compases — repetición y desarrollo motívico.
+    "lookback": {
+        "model_family": "melody_rnn",
+        "model_path": MODELS_DIR / "lookback_rnn.mag",
+        "model_url": "http://download.magenta.tensorflow.org/models/lookback_rnn.mag",
+        "model_config_id": "lookback_rnn",
+        "temperature": 1.0,
+        "response_bars": 4,
+        "needs_chords": False,
+        "polyphonic": False,
+    },
+    # MelodyRNN sin atención — respuesta directa, más ingenua.
+    "basic": {
+        "model_family": "melody_rnn",
+        "model_path": MODELS_DIR / "basic_rnn.mag",
+        "model_url": "http://download.magenta.tensorflow.org/models/basic_rnn.mag",
+        "model_config_id": "basic_rnn",
+        "temperature": 1.0,
+        "response_bars": 4,
+        "needs_chords": False,
+        "polyphonic": False,
+    },
+    # PolyphonyRNN — acordes y voicing real, completamente distinto al resto.
+    "polyphony": {
+        "model_family": "polyphony_rnn",
+        "model_path": MODELS_DIR / "polyphony_rnn.mag",
+        "model_url": "http://download.magenta.tensorflow.org/models/polyphony_rnn.mag",
+        "model_config_id": "polyphony_rnn",
         "temperature": 1.0,
         "response_bars": 4,
         "needs_chords": False,

@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument(
         "--mode",
         default="melody",
-        choices=["melody", "improv", "performance"],
+        choices=["melody", "improv", "performance", "lookback", "basic", "polyphony"],
         help="Modelo default (sin señal). Señal cambia al otro. Default: melody.",
     )
     parser.add_argument(
