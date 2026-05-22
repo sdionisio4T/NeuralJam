@@ -139,6 +139,10 @@ class MemoryBank:
             return None
         return self.user_phrases[-1]
 
+    def get_all_user(self) -> List[music_pb2.NoteSequence]:
+        """Devuelve todas las frases del usuario acumuladas en la sesión."""
+        return list(self.user_phrases)
+
     def all_phrases(self) -> List[music_pb2.NoteSequence]:
         return list(self._all)
 

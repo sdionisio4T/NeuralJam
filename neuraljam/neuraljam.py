@@ -115,6 +115,7 @@ def main():
     from neuraljam.playback import Player
     from neuraljam.scheduler import Scheduler
     from neuraljam.modes import MODES, next_mode
+    from neuraljam.recording import SessionRecorder
     from neuraljam.subconscious.engine import SubconsciousEngine, phrase_to_seq
 
     # ---- Bootstrap ------------------------------------------------------
@@ -181,6 +182,7 @@ def main():
         if n == 0:
             log.warning("Preload: ningún MIDI cargado — verificá la carpeta.")
 
+    recorder = SessionRecorder()
     subconscious = SubconsciousEngine(bank, model_lock=model_lock)
     if "improv" in models:
         subconscious.set_improv_model(models["improv"])
@@ -328,6 +330,9 @@ def main():
             if not baseline_state["active"]:
                 subconscious.trigger(user_ns, response, mode=current_mode)
 
+            # Grabar turno completo (usuario + IA)
+            recorder.add_turn(user_ns, response, qpm=live_qpm)
+
             player.play(response)
 
             # Guardar si el usuario presionó 's' durante la reproducción
@@ -356,6 +361,11 @@ def main():
             midi_out.close()
         except Exception:
             log.exception("Error cerrando MIDI out (no fatal)")
+        # Exportar sesión completa al salir
+        if recorder.turn_count > 0:
+            exported = recorder.export()
+            if exported:
+                log.info(f"Sesión guardada en: {exported}")
         log.info("Apagado limpio.")
 
 

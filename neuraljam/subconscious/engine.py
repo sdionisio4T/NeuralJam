@@ -314,8 +314,18 @@ class SubconsciousEngine:
             return None
 
         try:
-            chord = _chord_from_phrase(user_seq)
-            log.debug(f"Subconscious ImprovRNN: chord derivado = {chord!r}")
+            # Con ≥3 frases del usuario usar detección de tonalidad real;
+            # si hay pocas frases, derivar del pitch histogram de la frase actual.
+            if len(self.bank.user_phrases) >= 3:
+                from neuraljam.analysis.tonality import detect_tonality
+                tonality = detect_tonality(self.bank)
+                chord = tonality.tonic_chord
+                log.debug(
+                    f"Subconscious ImprovRNN: tonalidad detectada = {tonality}"
+                )
+            else:
+                chord = _chord_from_phrase(user_seq)
+                log.debug(f"Subconscious ImprovRNN: chord de pitch histogram = {chord!r}")
             return self._call_improv(user_seq, chord)
         except Exception:
             log.warning("Subconscious: ImprovRNN falló (no fatal)", exc_info=True)
