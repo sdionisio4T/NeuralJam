@@ -167,7 +167,7 @@ PROFILES = {
         "model_family": "polyphony_rnn",
         "model_path": MODELS_DIR / "polyphony_rnn.mag",
         "model_url": "http://download.magenta.tensorflow.org/models/polyphony_rnn.mag",
-        "model_config_id": "polyphony_rnn",
+        "model_config_id": "polyphony",
         "temperature": 1.0,
         "response_bars": 4,
         "needs_chords": False,

@@ -35,6 +35,23 @@ _MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09,
 _MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53,
                   2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 
+# Progresiones de blues (I7 IV7 I7 V7) — 4 acordes = 4 compases
+# Formato compacto para ImprovRNN: un acorde por compás
+_BLUES_PROGRESSIONS = {
+    "C":  "C7 F7 C7 G7",
+    "C#": "C#7 F#7 C#7 Ab7",
+    "D":  "D7 G7 D7 A7",
+    "Eb": "Eb7 Ab7 Eb7 Bb7",
+    "E":  "E7 A7 E7 B7",
+    "F":  "F7 Bb7 F7 C7",
+    "F#": "F#7 B7 F#7 C#7",
+    "G":  "G7 C7 G7 D7",
+    "Ab": "Ab7 Db7 Ab7 Eb7",
+    "A":  "A7 D7 A7 E7",
+    "Bb": "Bb7 Eb7 Bb7 F7",
+    "B":  "B7 E7 B7 F#7",
+}
+
 # Progresiones ii-V-I por tónica y modo
 _MAJOR_PROGRESSIONS = {
     "C":  "Dm7 G7 Cmaj7 Cmaj7",
@@ -70,13 +87,13 @@ _MINOR_PROGRESSIONS = {
 @dataclass
 class TonalityResult:
     tonic: str          # "A", "C", "G", etc.
-    mode: str           # "major" o "minor"
+    mode: str           # "major", "minor" o "blues"
     confidence: float   # 0.0 - 1.0, qué tan clara es la tonalidad
     progression: str    # progresión para ImprovRNN
     tonic_chord: str    # acorde raíz solo, para contexto simple
 
     def __str__(self) -> str:
-        mode_label = "mayor" if self.mode == "major" else "menor"
+        mode_label = {"major": "mayor", "minor": "menor", "blues": "blues"}.get(self.mode, self.mode)
         return (
             f"{self.tonic} {mode_label} "
             f"(confianza: {self.confidence:.0%}) → {self.progression}"
@@ -90,7 +107,11 @@ def detect_tonality(bank) -> TonalityResult:
     Extrae todas las notas de las frases del usuario acumuladas,
     construye un pitch class histogram y correlaciona contra los
     perfiles de Krumhansl-Kessler para todas las tonalidades mayores
-    y menores. Devuelve la que mejor correlaciona.
+    y menores.
+
+    Adicionalmente detecta sabor a blues: si la b3 y la b7 son fuertes
+    relativas a la tónica detectada, el modo se marca como "blues" y
+    la progresión devuelta es I7-IV7-I7-V7.
 
     Si el banco está vacío o hay muy pocas notas, devuelve C mayor
     como fallback neutral.
@@ -102,8 +123,13 @@ def detect_tonality(bank) -> TonalityResult:
 
     histogram = _pitch_histogram(notes)
     tonic, mode, confidence = _best_key(histogram)
+
+    # Detección de blues: b3 y b7 ambas bien representadas → blues
+    if _is_blues(histogram, tonic):
+        mode = "blues"
+
     progression = _progression_for(tonic, mode)
-    tonic_chord = tonic if mode == "major" else f"{tonic}m"
+    tonic_chord = f"{tonic}7" if mode == "blues" else (tonic if mode == "major" else f"{tonic}m")
 
     return TonalityResult(
         tonic=tonic,
@@ -184,7 +210,21 @@ def _best_key(histogram: List[float]):
     return best_tonic, best_mode, confidence
 
 
+def _is_blues(histogram: List[float], tonic: str) -> bool:
+    """
+    Detecta sabor a blues: b3 y b7 ambas presentes y fuertes.
+    Umbral: al menos 7% de las notas en cada pitch class.
+    """
+    tonic_pc = _PC_NAMES.index(tonic) if tonic in _PC_NAMES else 0
+    b3 = (tonic_pc + 3) % 12    # tercera menor
+    b7 = (tonic_pc + 10) % 12   # séptima menor
+    threshold = 0.07
+    return histogram[b3] > threshold and histogram[b7] > threshold
+
+
 def _progression_for(tonic: str, mode: str) -> str:
+    if mode == "blues":
+        return _BLUES_PROGRESSIONS.get(tonic, "C7 F7 C7 G7")
     if mode == "major":
         return _MAJOR_PROGRESSIONS.get(tonic, "Cmaj7 Cmaj7 Cmaj7 Cmaj7")
     return _MINOR_PROGRESSIONS.get(tonic, "Am7 Dm7 E7 Am7")

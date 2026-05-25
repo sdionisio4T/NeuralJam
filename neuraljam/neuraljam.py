@@ -25,6 +25,7 @@ Ctrl+C para salir limpio (all-notes-off + close de puertos).
 
 import argparse
 import logging
+import os
 import sys
 import threading
 import time
@@ -176,6 +177,9 @@ def main():
     _start_mode_cycler(mode_state, log)
     _start_baseline_listener(baseline_state, mode_state, log)
 
+    # Caché de tonalidad — se recalcula solo cuando crece el banco
+    _tonality: dict = {"result": None, "bank_len": 0}
+
     bank = MemoryBank(maxlen=8)
     if preload_folder:
         log.info(f"Precargando MIDIs desde: {preload_folder}")
@@ -288,45 +292,162 @@ def main():
 
                 phrase_dur = phrase.notes[-1].start_time + phrase.notes[-1].duration
                 temp = scheduler.temperature(len(phrase.notes), phrase_dur, mode=current_mode)
-                bars = scheduler.response_bars(phrase_dur, bpm=live_qpm, mode=current_mode)
+
+                if current_mode.match_user_bars:
+                    # DIÁLOGO: respuesta exactamente igual de larga que tu frase
+                    bar_dur = (60.0 / live_qpm) * 4.0
+                    bars = max(1, min(current_mode.response_bars_max, round(phrase_dur / bar_dur)))
+                else:
+                    bars = scheduler.response_bars(phrase_dur, bpm=live_qpm, mode=current_mode)
+
+                # Groove: ajuste sobre los valores del Scheduler.
+                # Se aplica solo si hay al menos un turno previo (groove.current != None).
+                temp_delta = groove.temperature_delta()
+                bars_hint  = groove.bars_hint()
+                if temp_delta != 0.0:
+                    temp_max = current_mode.temp_max if current_mode.temp_max is not None else 2.0
+                    temp = max(current_mode.temp_min, min(temp_max, temp + temp_delta))
+                if bars_hint > 0:
+                    bars = max(bars, min(current_mode.response_bars_max, bars_hint))
+
                 log.debug(
-                    f"[{current_mode.display}] Temperatura: {temp:.3f} | Compases: {bars} | QPM: {live_qpm:.1f}"
+                    f"[{current_mode.display}] Temperatura: {temp:.3f} (Δgroove={temp_delta:+.2f}) | "
+                    f"Compases: {bars} (hint={bars_hint}) | QPM: {live_qpm:.1f}"
                 )
 
-            t0 = time.perf_counter()
-            response = engine.respond(
-                phrase.notes,
-                model_key=key,
-                context_seq=context,
-                temperature=temp,
-                response_bars=bars,
-                qpm_override=live_qpm,
-            )
-            gen_time = time.perf_counter() - t0
-
-            if response is None:
-                log.warning("Sin respuesta (None). Esperando próxima frase.")
-                continue
-
-            # Esperar al próximo downbeat solo si --sync-beat está activo
-            if sync_beat and clock and clock.has_sync:
-                clock.wait_for_downbeat(max_wait_bars=0.75)
-
-            log.info(
-                f"Generación: {gen_time:.2f}s | "
-                f"Reproduciendo {response.total_time:.2f}s... "
-                f"[temp={temp:.2f}, bars={bars}, qpm={live_qpm:.0f}]"
-            )
-
-            # Swing + humanize antes de reproducir
-            response = humanize(
-                response,
-                swing=0.08,
-                velocity_variance=12,
-                qpm=live_qpm,
-            )
-
             user_ns = phrase_to_seq(phrase.notes, qpm=config.QPM_FALLBACK)
+
+            # Velocidad promedio del usuario → la IA responde con dinámica similar
+            user_avg_vel = int(sum(n.velocity for n in phrase.notes) / len(phrase.notes))
+
+            # ---- Blues filter: detecta tónica y prepara corrector armónico --
+            # Se calcula una vez por turno; se cachea mientras el banco no crece.
+            blues_tonic_pc = None
+            if not baseline_state["active"] and current_mode.use_blues_filter:
+                if not bank.is_empty():
+                    _blen = len(bank)
+                    if _tonality["result"] is None or _tonality["bank_len"] != _blen:
+                        from neuraljam.analysis.tonality import detect_tonality
+                        _tonality["result"] = detect_tonality(bank)
+                        _tonality["bank_len"] = _blen
+                        log.info(f"[TONALIDAD] {_tonality['result']}")
+                    tonal = _tonality["result"]
+                    if tonal.confidence > 0.3:
+                        from neuraljam.analysis.blues_filter import pc_from_name
+                        blues_tonic_pc = pc_from_name(tonal.tonic)
+                        log.debug(
+                            f"[BLUES] Tónica: {tonal.tonic} (pc={blues_tonic_pc}), "
+                            f"modo: {tonal.mode}, confianza: {tonal.confidence:.0%}"
+                        )
+                    else:
+                        log.debug(
+                            f"[BLUES] Confianza insuficiente ({tonal.confidence:.0%})"
+                            " — sin filtro este turno"
+                        )
+                else:
+                    log.debug("[BLUES] Banco vacío — acumulando frases antes de filtrar")
+
+            # ---- Modo A/B: dos respuestas por turno -------------------------
+            if not baseline_state["active"] and current_mode.dual_response:
+                # Respuesta A — sin contexto (modelo limpio)
+                t0 = time.perf_counter()
+                response_a = engine.respond(
+                    phrase.notes,
+                    model_key=key,
+                    context_seq=None,
+                    temperature=temp,
+                    response_bars=bars,
+                    qpm_override=live_qpm,
+                )
+                if response_a is None:
+                    log.warning("[A] Sin respuesta — continuando sin contexto de A.")
+                else:
+                    log.info(
+                        f"[A/B → SIN contexto] {response_a.total_time:.2f}s "
+                        f"[{time.perf_counter() - t0:.2f}s gen]"
+                    )
+                if response_a and current_mode.a_plays:
+                    if blues_tonic_pc is not None:
+                        from neuraljam.analysis.blues_filter import apply_blues_filter
+                        apply_blues_filter(response_a, blues_tonic_pc)
+                    player.play(humanize(response_a, swing=0.08, velocity_variance=12, qpm=live_qpm, velocity_base=user_avg_vel))
+                    time.sleep(0.4)   # pausa corta entre A y B
+
+                # Respuesta B — con contexto (banco de sesión, y A si b_hears_a)
+                ctx_b = subconscious.get_context()
+                if current_mode.b_hears_a and response_a is not None:
+                    # Concatenar banco + respuesta de A: B "escucha" al otro músico
+                    from neuraljam.subconscious.engine import _concat_seqs as _cat
+                    ctx_b = _cat(ctx_b, response_a) if ctx_b else response_a
+                t0 = time.perf_counter()
+                response_b = engine.respond(
+                    phrase.notes,
+                    model_key=key,
+                    context_seq=ctx_b,
+                    temperature=temp,
+                    response_bars=bars,
+                    qpm_override=live_qpm,
+                )
+                label = "B+" if not current_mode.a_plays else "A/B → CON contexto"
+                if response_b is not None:
+                    log.info(
+                        f"[{label}] {response_b.total_time:.2f}s "
+                        f"[{time.perf_counter() - t0:.2f}s gen]"
+                    )
+                if response_b:
+                    if blues_tonic_pc is not None:
+                        from neuraljam.analysis.blues_filter import apply_blues_filter
+                        apply_blues_filter(response_b, blues_tonic_pc)
+                    player.play(humanize(response_b, swing=0.08, velocity_variance=12, qpm=live_qpm))
+
+                # Usar B para groove, recorder y subconciente
+                response = response_b or response_a
+                if response is None:
+                    log.warning("A/B: ambas respuestas fallaron.")
+                    continue
+
+            # ---- Modo normal ------------------------------------------------
+            else:
+                t0 = time.perf_counter()
+                response = engine.respond(
+                    phrase.notes,
+                    model_key=key,
+                    context_seq=context,
+                    temperature=temp,
+                    response_bars=bars,
+                    qpm_override=live_qpm,
+                )
+                gen_time = time.perf_counter() - t0
+
+                if response is None:
+                    log.warning("Sin respuesta (None). Esperando próxima frase.")
+                    continue
+
+                # Esperar al próximo downbeat solo si --sync-beat está activo
+                if sync_beat and clock and clock.has_sync:
+                    clock.wait_for_downbeat(max_wait_bars=0.75)
+
+                log.info(
+                    f"Generación: {gen_time:.2f}s | "
+                    f"Reproduciendo {response.total_time:.2f}s... "
+                    f"[temp={temp:.2f}, bars={bars}, qpm={live_qpm:.0f}]"
+                )
+
+                # Blues filter (si está activo) → humanize
+                if blues_tonic_pc is not None:
+                    from neuraljam.analysis.blues_filter import apply_blues_filter
+                    apply_blues_filter(response, blues_tonic_pc)
+                response = humanize(
+                    response,
+                    swing=0.08,
+                    velocity_variance=12,
+                    qpm=live_qpm,
+                    velocity_base=user_avg_vel,
+                )
+
+                player.play(response)
+
+            # ---- Post-respuesta (común a todos los modos) -------------------
 
             # Groove: analizar perfil rítmico de la frase del usuario
             groove_profile = groove.update(user_ns, response, qpm=live_qpm)
@@ -338,12 +459,14 @@ def main():
 
             # Subconciente en background solo fuera de baseline
             if not baseline_state["active"]:
-                subconscious.trigger(user_ns, response, mode=current_mode)
+                subconscious.trigger(
+                    user_ns, response,
+                    mode=current_mode,
+                    groove_profile=groove.current,
+                )
 
             # Grabar turno completo (usuario + IA)
             recorder.add_turn(user_ns, response, qpm=live_qpm)
-
-            player.play(response)
 
             # Guardar si el usuario presionó 's' durante la reproducción
             if save_flag.is_set():
@@ -377,6 +500,9 @@ def main():
             if exported:
                 log.info(f"Sesión guardada en: {exported}")
         log.info("Apagado limpio.")
+        # Forzar salida: keyboard.wait() en los threads bloquea en Windows
+        # y no deja terminar el proceso aunque el main thread ya cerró todo.
+        os._exit(0)
 
 
 def _start_model_switcher(models: dict, model_state: dict, log) -> None:
@@ -404,7 +530,8 @@ def _start_model_switcher(models: dict, model_state: dict, log) -> None:
                 keyboard.add_hotkey(key, _make_switch(name))
             hint = "   ".join(f"[{k}] {v.upper()}" for k, v in key_map.items())
             log.info(f"Modelos disponibles -> {hint}   [s] guardar frase")
-            keyboard.wait()
+            while True:
+                time.sleep(0.1)
         except ImportError:
             log.warning("Selector de modelo desactivado -- pip install keyboard")
         except Exception:
@@ -437,7 +564,8 @@ def _start_baseline_listener(baseline_state: dict, mode_state: dict, log) -> Non
         try:
             import keyboard
             keyboard.add_hotkey("b", _toggle)
-            keyboard.wait()
+            while True:
+                time.sleep(0.1)
         except ImportError:
             log.warning("Baseline desactivado -- pip install keyboard")
         except Exception:
@@ -463,7 +591,8 @@ def _start_mode_cycler(mode_state: dict, log) -> None:
         try:
             import keyboard
             keyboard.add_hotkey("m", _cycle)
-            keyboard.wait()
+            while True:
+                time.sleep(0.1)
         except ImportError:
             log.warning("Selector de modo desactivado -- pip install keyboard")
         except Exception:
@@ -482,7 +611,8 @@ def _start_save_listener(save_flag: threading.Event, log) -> None:
             import keyboard
             keyboard.add_hotkey("s", save_flag.set)
             log.info("Guardado activo: presioná 's' después de un turno para guardar la frase.")
-            keyboard.wait()
+            while True:
+                time.sleep(0.1)
         except ImportError:
             log.warning(
                 "Guardado de frases desactivado. "

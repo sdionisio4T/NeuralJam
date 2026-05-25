@@ -139,6 +139,42 @@ class MemoryBank:
             return None
         return self.user_phrases[-1]
 
+    def get_most_similar(self, profile) -> Optional[music_pb2.NoteSequence]:
+        """
+        Devuelve la frase de usuario del banco más parecida rítmicamente
+        al perfil dado (RhythmProfile del turno actual).
+
+        Si el banco tiene menos de 2 frases, devuelve la última (igual que
+        get_last_user). La similaridad se mide por distancia en tres ejes:
+        density, pulse_regularity, syncopation.
+        """
+        if not self.user_phrases:
+            return None
+        if len(self.user_phrases) < 2:
+            return self.user_phrases[-1]
+
+        from neuraljam.analysis.groove.extractor import extract_profile
+
+        best_seq = None
+        best_dist = float("inf")
+
+        for seq in self.user_phrases:
+            try:
+                qpm = seq.tempos[0].qpm if seq.tempos else 120.0
+                p = extract_profile(seq, qpm=qpm)
+                dist = (
+                    abs(p.density - profile.density) / max(profile.density, 1.0) * 0.4
+                    + abs(p.pulse_regularity - profile.pulse_regularity) * 0.3
+                    + abs(p.syncopation - profile.syncopation) * 0.3
+                )
+                if dist < best_dist:
+                    best_dist = dist
+                    best_seq = seq
+            except Exception:
+                continue
+
+        return best_seq or self.user_phrases[-1]
+
     def get_all_user(self) -> List[music_pb2.NoteSequence]:
         """Devuelve todas las frases del usuario acumuladas en la sesión."""
         return list(self.user_phrases)

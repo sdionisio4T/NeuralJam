@@ -26,6 +26,7 @@ def humanize(
     swing: float = 0.08,
     velocity_variance: int = 12,
     qpm: float = 120.0,
+    velocity_base: int = None,
 ) -> music_pb2.NoteSequence:
     """
     Aplica swing + variación de velocidad a una NoteSequence.
@@ -38,6 +39,8 @@ def humanize(
         velocity_variance: variación máxima de velocidad MIDI (±N).
                            12 da un rango humano sin exagerar.
         qpm:               tempo de la sesión para calcular beat duration.
+        velocity_base:     velocidad base de la IA (promedio de la frase del
+                           usuario). None = usar velocidad del modelo tal cual.
 
     Returns:
         La misma secuencia modificada.
@@ -58,8 +61,11 @@ def humanize(
             note.end_time += swing_offset
 
         # ---- Velocity ----
+        # Si hay base del usuario, centrar alrededor de ella.
+        # Si no, usar la velocidad que generó el modelo.
+        base = velocity_base if velocity_base is not None else note.velocity
         delta = random.randint(-velocity_variance, velocity_variance)
-        note.velocity = max(30, min(127, note.velocity + delta))
+        note.velocity = max(30, min(127, base + delta))
 
     # Actualizar total_time por si el swing extendió el final
     seq.total_time = max(n.end_time for n in seq.notes)

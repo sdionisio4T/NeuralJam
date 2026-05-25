@@ -1,4 +1,4 @@
-# NeuralJam — Estado del sistema (2026-05-21)
+# NeuralJam — Estado del sistema (2026-05-24)
 
 ## Resumen
 
@@ -71,13 +71,12 @@ Sincronización con Studio One via loopMIDI. EMA sobre pulsos de 24ppq.
 Swing (0.08) + velocity variance (±12). Se aplica antes de reproducir,
 después de la generación.
 
-### Fase 10 — Groove Engine
+### Fase 10 — Groove Engine ✅ wired
 `neuraljam/analysis/groove/`
 
 Calcula density, syncopation, pulse_regularity, tension por turno.
-`temperature_delta()` y `bars_hint()` están calculados y logueados.
-**Pendiente:** wirear al Scheduler (espera que el usuario pueda escuchar
-la diferencia antes de activarlo).
+`temperature_delta()` y `bars_hint()` ahora se aplican sobre los valores
+del Scheduler en cada turno. Wired el 2026-05-24. Pendiente validación auditiva.
 
 ### Fase 13 — Pipeline de fine-tuning
 `tools/export_for_training.py`, `colab/finetune_neuraljam.ipynb`
@@ -94,41 +93,96 @@ al `Ctrl+C` si hubo al menos 1 turno. Guardado en `sessions/`.
 
 ---
 
+## Hallazgos sesión 2026-05-24
+
+### Modo A/B — confirmado y validado auditivamente
+- Ambas respuestas (A y B) suenan bien por separado
+- Con metrónomo B mejora drásticamente — desarrolla las ideas del usuario
+- **Por qué B es mejor**: attention_rnn tiene más material para el mecanismo
+  de atención (banco + frase actual vs solo frase actual). Doble historia
+  rítmica → detecta el groove y lo continúa
+- **B = NORMAL**: confirmado que son idénticos en parámetros y contexto
+- **A = DIRECTO**: scheduler + groove activos, sin banco. Nuevo modo creado
+
+### Contexto y ritmo
+- El contexto mejora el ritmo más que cualquier otro parámetro
+- Con metrónomo la diferencia A vs B es muy audible — B "desarrolla ideas"
+- Sin metrónomo ambos suenan bien pero menos comparables
+
+### B+ — revisado, validado ✅
+- Primer test negativo (sesión corta, banco vacío, A sin guía)
+- Segundo test con banco acumulado: funciona bien, B suena mejor que en A/B
+- Conclusión: B+ necesita algunas frases en el banco para que A tenga
+  material de referencia implícita. Con banco vacío A se desorienta.
+
+### Modos nuevos agregados
+- **DIRECTO**: scheduler + groove, sin banco — equivale a la A del A/B
+- **A/B**: dos respuestas por turno, A sin contexto, B con banco
+- **A/B 2**: igual pero B también hereda la respuesta de A
+- **B+**: A en silencio, B con banco + respuesta de A (resultado negativo)
+- **DIÁLOGO**: call-and-response estricto — respuesta igual de larga que tu frase ✅ validado
+
+### DIÁLOGO — validado 2026-05-24 ✅
+- `match_user_bars=True`: bars = round(phrase_dur / bar_dur), clampado a response_bars_max
+- Siempre responde (always_respond=True), usa banco, temp 0.6–0.95
+- Resultado: mejora significativa ("mejoró muchísimo") — el modelo no desperdicia
+  pasos intentando terminar antes/después. El espacio fijo le da estructura al diálogo.
+
+### Launcher raíz corregido
+`neuraljam.py` raíz era versión legada con `phrase.has_signal` obsoleto.
+Reemplazado por redirector al paquete real.
+
+---
+
 ## Modelos disponibles
 
 | Tecla | Modelo | Estado | Notas |
 |-------|--------|--------|-------|
-| [1] | attention_rnn | ✅ operativo | Default, el más probado |
+| [1] | attention_rnn | ✅ validado en sesión | Default, el más probado |
 | [2] | chord_pitches_improv | ✅ operativo | Requiere chord annotation |
 | [3] | performance_with_dynamics | ✅ bundle OK | Sin testear end-to-end |
-| [4] | lookback_rnn | ⬇ descarga al arrancar | Motívico, repetición |
-| [5] | basic_rnn | ⬇ descarga al arrancar | Más simple, sin atención |
-| [6] | polyphony_rnn | ⬇ descarga al arrancar | Acordes reales |
+| [4] | lookback_rnn | ⬇ descarga al arrancar | Sin testear |
+| [5] | basic_rnn | ⬇ descarga al arrancar | Sin testear |
+| [6] | polyphony_rnn | ⬇ descarga al arrancar | Sin testear |
+
+## Modos disponibles ([m] para ciclar)
+
+| Modo | Tecla | Temp | Memoria | Carácter |
+|------|-------|------|---------|----------|
+| NORMAL | — | 0.6–0.95 | banco | validado ✅ |
+| DIÁLOGO | m×1 | 0.6–0.95 | banco | validado ✅ — mejor estructura |
+| IMITACIÓN | m×2 | 0.45 fijo | no | sin validar |
+| LIBRE | m×3 | 0.6–∞ | banco+VAE | sin validar |
+| EXPERIMENTAL | m×4 | 0.6–∞ | banco+VAE | sin validar |
+| A/B | m×5 | 0.6–0.95 | A:no / B:banco | validado ✅ |
+| A/B 2 | m×6 | 0.6–0.95 | A:no / B:banco+A | validado ✅ — suena mejor |
+| B+ | m×7 | 0.6–0.95 | A:silencio→B | validado ✅ — necesita banco previo |
+| DIRECTO | m×8 | 0.6–0.95 | no | sin validar aislado |
 
 ---
 
 ## Pendiente / próximos pasos
 
-### Groove → Scheduler (alta prioridad, baja complejidad)
-`GrooveEngine.temperature_delta()` y `bars_hint()` ya están calculados en
-cada turno. Solo falta pasarlos al Scheduler como offset adicional.
-Espera audición del usuario para validar que mejora.
-
-### PerformanceRNN end-to-end
-Bundle descargado, builder implementado. No se testeó con frases reales
-en el loop completo. Probarlo con tecla [3].
-
 ### Modelos nuevos [4][5][6]
-Se descargan automáticamente en el primer arranque. Probar uno por uno
-y comparar el carácter de cada uno.
+Sin testear. Primera prioridad para próxima sesión con audio.
+
+### PerformanceRNN [3] end-to-end
+Bundle descargado, builder implementado. Nunca tocado en vivo.
+
+### IMITACIÓN, LIBRE, EXPERIMENTAL
+Implementados pero sin comparación auditiva formal.
+
+### A/B 2 ✅ validado
+B hereda banco + respuesta de A. Suena bien.
+
+### B+ ✅ validado
+Funciona bien con banco acumulado. Con banco vacío A se desorienta.
 
 ### Fine-tuning
-16 frases guardadas actualmente — necesita 30 para un cambio sutil.
-El pipeline de Colab está listo para cuando haya suficiente material.
+~17 frases guardadas. Necesita 30 mínimo. Seguir guardando con [s].
 
 ### Groove → SubconsciousEngine (baja prioridad)
-Usar el perfil rítmico para pesar el primer del subconciente.
-Ideas: si la frase es sincopada, preferir frases del banco también sincopadas.
+Usar perfil rítmico para elegir del banco la frase más parecida rítmicamente.
 
 ---
 

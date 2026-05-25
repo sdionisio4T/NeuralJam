@@ -115,6 +115,7 @@ class SubconsciousEngine:
         user_seq: music_pb2.NoteSequence,
         ai_seq: music_pb2.NoteSequence,
         mode=None,
+        groove_profile=None,
     ) -> None:
         """
         Iniciar actualización de background. No bloquea.
@@ -136,7 +137,7 @@ class SubconsciousEngine:
 
         self._thread = threading.Thread(
             target=self._run,
-            args=(user_seq, ai_seq, mode),
+            args=(user_seq, ai_seq, mode, groove_profile),
             name="Subconscious",
             daemon=True,
         )
@@ -159,10 +160,11 @@ class SubconsciousEngine:
         user_seq: music_pb2.NoteSequence,
         ai_seq: music_pb2.NoteSequence,
         mode=None,
+        groove_profile=None,
     ) -> None:
         try:
             self.bank.add(user_seq, ai_seq)
-            context = self._build_context(user_seq, mode)
+            context = self._build_context(user_seq, mode, groove_profile)
             with self._lock:
                 self._context = context
 
@@ -178,6 +180,7 @@ class SubconsciousEngine:
         self,
         user_seq: music_pb2.NoteSequence,
         mode=None,
+        groove_profile=None,
     ) -> Optional[music_pb2.NoteSequence]:
         """
         Construye el context_seq para MelodyRNN según el modo activo.
@@ -186,8 +189,8 @@ class SubconsciousEngine:
         libre/exp:    MusicVAE + ImprovRNN concatenados + fallback banco
         imitación:    None (sin contexto — se maneja en trigger() antes de llegar acá)
 
-        Si ImprovRNN y MusicVAE están disponibles y el modo los pide,
-        se concatenan (improv primero) y prepare.py recorta al presupuesto.
+        Si hay groove_profile, elige del banco la frase más parecida
+        rítmicamente al turno actual. Si no, usa la última frase del usuario.
         """
         use_vae = (mode is None or mode.use_music_vae)
         use_improv = (mode is not None and mode.use_improv_background)
@@ -195,7 +198,12 @@ class SubconsciousEngine:
         with self._lock:
             music_vae = self._music_vae if use_vae else None
 
-        ref_seq = self.bank.get_last_user() or self.bank.get_random()
+        # Elegir frase del banco por similaridad rítmica si hay perfil disponible
+        if groove_profile is not None:
+            ref_seq = self.bank.get_most_similar(groove_profile) or self.bank.get_random()
+            log.debug(f"Subconscious: frase del banco elegida por groove (profile={groove_profile})")
+        else:
+            ref_seq = self.bank.get_last_user() or self.bank.get_random()
 
         # --- Capa ImprovRNN (chord dinámico) ---
         improv_ctx = None
