@@ -170,12 +170,14 @@ def main():
 
     # Listener de teclado: guardar [s], modelo [1/2/3], modo [m], baseline [b]
     save_flag = threading.Event()
+    shutdown_event = threading.Event()
     mode_state = {"current": "normal"}
     baseline_state = {"active": False, "prev_mode": "normal"}
     _start_save_listener(save_flag, log)
     _start_model_switcher(models, model_state, log)
     _start_mode_cycler(mode_state, log)
     _start_baseline_listener(baseline_state, mode_state, log)
+    _start_quit_listener(shutdown_event, log)
 
     # Caché de tonalidad — se recalcula solo cuando crece el banco
     _tonality: dict = {"result": None, "bank_len": 0}
@@ -223,14 +225,15 @@ def main():
         detector.start()
         midi_out.open()
         log.info(
-            "Sistema listo. Toca una frase y espera la respuesta. Ctrl+C para salir."
+            "Sistema listo. Toca una frase y espera la respuesta. "
+            "Ctrl+C o [q] para salir."
         )
 
         turn = 0
         last_key = None
 
-        while True:
-            phrase = detector.wait_for_phrase()
+        while not shutdown_event.is_set():
+            phrase = detector.wait_for_phrase(timeout=0.5)
             if phrase is None:
                 continue
 
@@ -481,25 +484,43 @@ def main():
             log.info("Listo. Tu turno.\n")
 
     except KeyboardInterrupt:
-        log.info("\nCtrl+C detectado, cerrando...")
+        shutdown_event.set()
+        print("\n[1/4] Ctrl+C detectado — interrumpiendo reproducción...")
     except Exception:
         log.exception("Error fatal en el loop principal")
         raise
     finally:
+        # 1. Cortar reproducción inmediatamente (si el player está tocando)
+        print("\n[1/4] Interrumpiendo reproducción...")
+        try:
+            player.stop()
+        except Exception:
+            pass
+
+        # 2. Detener captura MIDI
+        print("[2/4] Deteniendo captura MIDI...")
         try:
             detector.stop()
         except Exception:
             log.exception("Error parando detector (no fatal)")
+
+        # 3. Cerrar puerto MIDI de salida
+        print("[3/4] Cerrando puerto MIDI...")
         try:
             midi_out.close()
         except Exception:
             log.exception("Error cerrando MIDI out (no fatal)")
-        # Exportar sesión completa al salir
+
+        # 4. Exportar sesión completa al salir
         if recorder.turn_count > 0:
+            print(f"[4/4] Guardando sesión ({recorder.turn_count} turnos)...")
             exported = recorder.export()
             if exported:
-                log.info(f"Sesión guardada en: {exported}")
-        log.info("Apagado limpio.")
+                print(f"      → {exported}")
+        else:
+            print("[4/4] Sin turnos grabados — nada que guardar.")
+
+        print("Apagado limpio. Hasta la próxima.\n")
         # Forzar salida: keyboard.wait() en los threads bloquea en Windows
         # y no deja terminar el proceso aunque el main thread ya cerró todo.
         os._exit(0)
@@ -599,6 +620,35 @@ def _start_mode_cycler(mode_state: dict, log) -> None:
             log.warning("Selector de modo no disponible.", exc_info=True)
 
     threading.Thread(target=_listen, name="ModeCycler", daemon=True).start()
+
+
+def _start_quit_listener(shutdown_event: threading.Event, log) -> None:
+    """
+    Registra Ctrl+C y [q] como hotkeys de salida via keyboard lib.
+
+    En Windows, keyboard lib intercepta las teclas a nivel OS antes de que
+    lleguen al signal handler de Python. Registramos Ctrl+C directamente
+    aquí para que el shutdown funcione aunque el SIGINT no llegue al main thread.
+    [q] es el atajo alternativo.
+    """
+    def _quit():
+        if not shutdown_event.is_set():
+            print("\n[SALIDA] Ctrl+C / [q] detectado — cerrando en ≤0.5s...")
+            shutdown_event.set()
+
+    def _listen():
+        try:
+            import keyboard
+            keyboard.add_hotkey("ctrl+c", _quit, suppress=True)
+            keyboard.add_hotkey("q", _quit)
+            while not shutdown_event.is_set():
+                time.sleep(0.1)
+        except ImportError:
+            pass
+        except Exception:
+            log.warning("QuitListener: error (no fatal).", exc_info=True)
+
+    threading.Thread(target=_listen, name="QuitListener", daemon=True).start()
 
 
 def _start_save_listener(save_flag: threading.Event, log) -> None:

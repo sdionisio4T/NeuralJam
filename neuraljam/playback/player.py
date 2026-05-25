@@ -20,6 +20,7 @@ con prioridad alta o a un timer-based scheduler.
 """
 
 import logging
+import threading
 import time
 from typing import List, Tuple
 
@@ -34,6 +35,9 @@ log = logging.getLogger(__name__)
 # Tipo del evento interno. (timestamp_sec, is_note_on, pitch, velocity)
 _Event = Tuple[float, bool, int, int]
 
+# Tamaño máximo del slice de sleep — limita cuánto tarda en reaccionar al stop.
+_MAX_SLEEP_SLICE = 0.05   # 50ms — inaudible, pero Ctrl+C responde en ≤50ms
+
 
 class Player:
     """
@@ -42,17 +46,27 @@ class Player:
     El player NO abre el MidiOutput: lo recibe ya abierto. Razón: el
     puerto debería estar abierto durante toda la sesión, no abrir/cerrar
     por cada respuesta. El entry point maneja el ciclo de vida.
+
+    stop() corta la reproducción inmediatamente (all-notes-off).
+    Diseñado para que Ctrl+C pueda interrumpir sin esperar el final de la frase.
     """
 
     def __init__(self, midi_out: MidiOutput, channel: int = 0):
         self.midi_out = midi_out
         self.channel = channel
+        self._stop_event = threading.Event()
+
+    def stop(self) -> None:
+        """Interrumpe la reproducción en curso. Seguro llamar desde cualquier thread."""
+        self._stop_event.set()
 
     def play(self, seq: music_pb2.NoteSequence) -> None:
         """
         Reproduce un NoteSequence completo, bloqueando hasta el final.
 
         Si seq está vacío, retorna inmediatamente sin error.
+        Respeta stop(): si se llama stop() durante la reproducción,
+        corta en ≤50ms y hace all-notes-off.
         """
         if not seq.notes:
             log.warning("Player.play() llamado con NoteSequence vacío")
@@ -62,33 +76,55 @@ class Player:
         if not events:
             return
 
+        self._stop_event.clear()
+
         # t0 = ahora; los timestamps de los eventos son relativos a t0.
         t0 = time.perf_counter()
-        last_pitch_logged = None
+        active_pitches: set = set()
 
         for ts, is_on, pitch, vel in events:
+            # Cortar si se pidió stop (Ctrl+C u otro)
+            if self._stop_event.is_set():
+                break
+
             target = t0 + ts
-            now = time.perf_counter()
-            wait = target - now
-            if wait > 0:
-                time.sleep(wait)
+            # Sleep en slices pequeños para que stop() reaccione rápido
+            while True:
+                now = time.perf_counter()
+                remaining = target - now
+                if remaining <= 0:
+                    break
+                if self._stop_event.is_set():
+                    break
+                time.sleep(min(remaining, _MAX_SLEEP_SLICE))
+
+            if self._stop_event.is_set():
+                break
 
             try:
                 if is_on:
                     self.midi_out.note_on(pitch, velocity=vel, channel=self.channel)
+                    active_pitches.add(pitch)
                     log.debug(f"on  pitch={pitch} vel={vel} ts={ts:.3f}")
                 else:
                     self.midi_out.note_off(pitch, channel=self.channel)
+                    active_pitches.discard(pitch)
                     log.debug(f"off pitch={pitch}        ts={ts:.3f}")
             except Exception:
-                # No matar el loop completo por un mensaje fallido.
-                # Loguear y seguir; el resto de la frase puede sonar.
                 log.exception(f"Error enviando MIDI (pitch={pitch})")
 
-        # Cortesía: garantizar que no queden note-ons sin off por algún
-        # bug futuro en el flattening (no debería pasar, pero barato).
+        # All-notes-off para cualquier nota que quedó activa (stop o error)
+        for p in active_pitches:
+            try:
+                self.midi_out.note_off(p, channel=self.channel)
+            except Exception:
+                pass
+
         total_duration = seq.total_time
-        log.info(f"Reproducción terminada ({total_duration:.2f}s)")
+        if self._stop_event.is_set():
+            log.debug(f"Reproducción interrumpida (stop) a ~{time.perf_counter()-t0:.2f}s/{total_duration:.2f}s")
+        else:
+            log.info(f"Reproducción terminada ({total_duration:.2f}s)")
 
     # ----------------------------------------------------------------- #
     # Internos
